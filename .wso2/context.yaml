@@ -1,0 +1,3 @@
+- org: pabloco
+  project: local-job-board
+  local: true

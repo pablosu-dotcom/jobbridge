@@ -1,0 +1,903 @@
+/* =====================================================
+   JobBridge MVP
+===================================================== */
+
+:root{
+  --primary:#174A8B;
+  --secondary:#2FA64A;
+  --background:#F5F7FA;
+  --white:#FFFFFF;
+  --text:#1F2937;
+  --gray:#6B7280;
+  --border:#E5E7EB;
+}
+
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+}
+
+body{
+  font-family:Arial,Helvetica,sans-serif;
+  background:var(--background);
+  color:var(--text);
+}
+
+.app{
+  min-height:100vh;
+}
+
+/* ===========================
+   Header
+=========================== */
+
+.header{
+
+  background:white;
+
+  text-align:center;
+
+  padding:25px 0;
+
+  border-bottom:1px solid var(--border);
+
+}
+
+.logo{
+
+  height:80px;
+
+}
+
+.header {
+  position: relative;
+}
+
+.authControls {
+  position: absolute;
+  top: 50%;
+  right: 30px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transform: translateY(-50%);
+}
+
+.signedInUser {
+  color: var(--gray);
+  font-size: 14px;
+}
+
+.signInButton,
+.signOutButton {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 7px;
+  color: white;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.signInButton {
+  background: var(--primary);
+}
+
+.signInButton:hover {
+  background: #133b6d;
+}
+
+.signOutButton {
+  background: var(--secondary);
+}
+
+.signOutButton:hover {
+  background: #24883d;
+}
+
+@media (max-width: 768px) {
+  .header {
+    padding-bottom: 75px;
+  }
+
+  .authControls {
+    top: auto;
+    right: 0;
+    bottom: 18px;
+    left: 0;
+    justify-content: center;
+    transform: none;
+  }
+}
+
+/* ===========================
+   Main Container
+=========================== */
+
+.container{
+
+  max-width:900px;
+
+  margin:40px auto;
+
+  padding:0 20px;
+
+}
+
+.container h1{
+
+  text-align:center;
+
+  color:var(--primary);
+
+  font-size:34px;
+
+  margin-bottom:30px;
+
+  font-weight:700;
+
+}
+
+.container h2{
+
+  color:var(--primary);
+
+  margin-bottom:20px;
+
+}
+
+/* ===========================
+   Search
+=========================== */
+
+.searchBar{
+
+  margin-bottom:40px;
+
+}
+
+.searchBar input{
+
+  width:100%;
+
+  padding:15px;
+
+  border:1px solid #D1D5DB;
+
+  border-radius:8px;
+
+  font-size:16px;
+
+  outline:none;
+
+}
+
+.searchBar input:focus{
+
+  border-color:var(--primary);
+
+}
+
+/* ===========================
+   Job Cards
+=========================== */
+
+.jobCard{
+
+  background:white;
+
+  border:1px solid var(--border);
+
+  border-radius:12px;
+
+  padding:24px;
+
+  margin-bottom:20px;
+
+  display:flex;
+
+  justify-content:space-between;
+
+  align-items:center;
+
+  box-shadow:0 3px 12px rgba(0,0,0,.06);
+
+  transition:.2s;
+
+}
+
+.jobCard:hover{
+
+  transform:translateY(-2px);
+
+  box-shadow:0 8px 20px rgba(0,0,0,.08);
+
+}
+
+.jobInfo{
+
+  flex:1;
+
+}
+
+.jobInfo h3{
+
+  color:var(--primary);
+
+  margin-bottom:8px;
+
+  font-size:24px;
+
+}
+
+.organization{
+
+  color:var(--secondary);
+
+  font-weight:bold;
+
+  margin-bottom:10px;
+
+}
+
+.details{
+
+  color:var(--gray);
+
+  margin-bottom:12px;
+
+  font-size:15px;
+
+}
+
+.description{
+
+  color:#444;
+
+  line-height:1.5;
+
+}
+
+/* ===========================
+   Apply Button
+=========================== */
+
+.jobActions{
+
+  margin-left:30px;
+
+}
+
+.applyButton{
+
+  background:var(--secondary);
+
+  color:white;
+
+  border:none;
+
+  border-radius:8px;
+
+  padding:12px 24px;
+
+  font-size:16px;
+
+  font-weight:bold;
+
+  cursor:pointer;
+
+  transition:.2s;
+
+}
+
+.applyButton:hover{
+
+  background:#24883D;
+
+}
+
+/* ===========================
+   Empty State
+=========================== */
+
+.emptyState{
+
+  background:white;
+
+  border:1px dashed var(--border);
+
+  padding:30px;
+
+  text-align:center;
+
+  border-radius:10px;
+
+  color:var(--gray);
+
+}
+
+/* ===========================
+   Footer
+=========================== */
+
+footer{
+
+  margin-top:60px;
+
+  padding:25px;
+
+  text-align:center;
+
+  color:var(--gray);
+
+  border-top:1px solid var(--border);
+
+  background:white;
+
+}
+
+/* ===========================
+   Mobile
+=========================== */
+
+@media (max-width:768px){
+
+  .container h1{
+
+    font-size:28px;
+
+  }
+
+  .jobCard{
+
+    flex-direction:column;
+
+    align-items:flex-start;
+
+  }
+
+  .jobActions{
+
+    margin-left:0;
+
+    margin-top:20px;
+
+    width:100%;
+
+  }
+
+  .applyButton{
+
+    width:100%;
+
+  }
+
+  .logo{
+
+    height:65px;
+
+  }
+
+}
+/* ===========================
+   View Tabs
+=========================== */
+
+.viewTabs {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 35px;
+}
+
+.tab {
+  padding: 11px 22px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: white;
+  color: var(--primary);
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.activeTab {
+  background: var(--primary);
+  color: white;
+}
+
+/* ===========================
+   Messages
+=========================== */
+
+.successMessage,
+.errorMessage {
+  margin-bottom: 24px;
+  padding: 14px 18px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.successMessage {
+  color: #1f6d36;
+  background: #eaf8ef;
+  border: 1px solid #b9e3c6;
+}
+
+.errorMessage {
+  color: #a12626;
+  background: #fff0f0;
+  border: 1px solid #efc0c0;
+}
+
+/* ===========================
+   Create Job Form
+=========================== */
+
+.createSection {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.formIntroduction {
+  margin-top: -15px;
+  margin-bottom: 28px;
+  color: var(--gray);
+  text-align: center;
+}
+
+.jobForm {
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+}
+
+.jobForm label {
+  display: block;
+  margin-bottom: 20px;
+  color: var(--primary);
+  font-weight: bold;
+}
+
+.jobForm input,
+.jobForm select,
+.jobForm textarea {
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 7px;
+  background: white;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+.jobForm textarea {
+  resize: vertical;
+}
+
+.jobForm input:focus,
+.jobForm select:focus,
+.jobForm textarea:focus {
+  border-color: var(--primary);
+}
+
+.publishButton {
+  width: 100%;
+  padding: 13px 20px;
+  border: none;
+  border-radius: 8px;
+  background: var(--secondary);
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.publishButton:hover:not(:disabled) {
+  background: #24883d;
+}
+
+.publishButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+@media (max-width: 768px) {
+  .viewTabs {
+    width: 100%;
+  }
+
+  .tab {
+    flex: 1;
+  }
+
+  .jobForm {
+    padding: 20px;
+  }
+}
+
+.userSummary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.roleText {
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.roleWarning {
+  margin-top: 25px;
+  padding: 14px 18px;
+  color: #775b12;
+  background: #fff8dc;
+  border: 1px solid #ead58c;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.adminSection {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .userSummary {
+    align-items: center;
+  }
+}
+
+/* ===========================
+   Admin Review
+=========================== */
+
+.adminJobCard {
+  align-items: flex-start;
+}
+
+.adminActions {
+  min-width: 130px;
+  margin-left: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.approveButton,
+.rejectButton {
+  width: 100%;
+  padding: 11px 18px;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.approveButton {
+  background: var(--secondary);
+}
+
+.approveButton:hover {
+  background: #24883d;
+}
+
+.rejectButton {
+  background: #c62828;
+}
+
+.rejectButton:hover {
+  background: #a61e1e;
+}
+
+.pendingStatus {
+  margin-top: 12px;
+  color: #9a6a00;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+@media (max-width: 768px) {
+  .adminActions {
+    width: 100%;
+    min-width: 0;
+    margin-top: 20px;
+    margin-left: 0;
+  }
+}
+
+/* ===========================
+   Organization Registration
+=========================== */
+
+.organizationStatusCard {
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  text-align: center;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+}
+
+.organizationStatusCard h2 {
+  margin-bottom: 14px;
+}
+
+.organizationStatusCard p {
+  margin-top: 10px;
+  color: var(--gray);
+  line-height: 1.6;
+}
+
+.pendingOrganization {
+  border-color: #ead58c;
+  background: #fffaf0;
+}
+
+.pendingOrganization h2 {
+  color: #9a6a00;
+}
+
+.rejectedOrganization {
+  border-color: #efc0c0;
+  background: #fff5f5;
+}
+
+.rejectedOrganization h2 {
+  color: #a12626;
+}
+
+.approvedOrganization {
+  border-color: #b9e3c6;
+  background: #f1fbf4;
+}
+
+.approvedOrganization h2 {
+  color: #1f6d36;
+}
+
+.adminReviewGroup {
+  margin-bottom: 48px;
+}
+
+.sectionHeadingRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.sectionHeadingRow h2 {
+  margin: 0 0 6px;
+}
+
+.sectionHeadingRow p {
+  margin: 0;
+  color: var(--gray);
+}
+
+.adminCards {
+  display: grid;
+  gap: 18px;
+}
+
+.adminReviewCard {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.05);
+}
+
+.adminReviewContent {
+  flex: 1;
+}
+
+.reviewCardHeader h3 {
+  margin: 0 0 10px;
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.pendingBadge {
+  color: #8a6200;
+  background: #fff3c4;
+}
+
+.organizationDetails {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(180px, 1fr)
+  );
+  gap: 16px;
+  margin: 22px 0 0;
+}
+
+.organizationDetails div {
+  min-width: 0;
+}
+
+.organizationDetails dt {
+  margin-bottom: 5px;
+  color: var(--gray);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.organizationDetails dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.organizationDetails a {
+  color: var(--navy);
+}
+
+.reviewDescription {
+  margin: 20px 0 0;
+  color: var(--gray);
+  line-height: 1.6;
+}
+
+.reviewActions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-width: 120px;
+}
+
+.approveButton,
+.rejectButton,
+.secondaryButton {
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.approveButton {
+  color: white;
+  background: var(--green);
+  border: 1px solid var(--green);
+}
+
+.rejectButton {
+  color: #9b2525;
+  background: white;
+  border: 1px solid #d9a5a5;
+}
+
+.secondaryButton {
+  color: var(--navy);
+  background: white;
+  border: 1px solid var(--border);
+}
+
+.approveButton:hover,
+.rejectButton:hover,
+.secondaryButton:hover {
+  opacity: 0.88;
+}
+
+@media (max-width: 700px) {
+  .sectionHeadingRow,
+  .adminReviewCard {
+    flex-direction: column;
+  }
+
+  .reviewActions {
+    width: 100%;
+    flex-direction: row;
+  }
+
+  .reviewActions button {
+    flex: 1;
+  }
+}
+
+.approveButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  padding: 10px 18px;
+
+  color: #ffffff !important;
+  background-color: #2f7d4a !important;
+  border: 1px solid #2f7d4a !important;
+
+  border-radius: 8px;
+  font-weight: 700;
+  opacity: 1 !important;
+  visibility: visible !important;
+  cursor: pointer;
+}
+
+.approveButton:hover {
+  color: #ffffff !important;
+  background-color: #25683d !important;
+  border-color: #25683d !important;
+  opacity: 1 !important;
+}
+
+.approveButton:focus,
+.approveButton:focus-visible {
+  color: #ffffff !important;
+  background-color: #25683d !important;
+  outline: 3px solid rgba(47, 125, 74, 0.25);
+  outline-offset: 2px;
+}
+
+.approveButton:disabled {
+  color: #ffffff !important;
+  background-color: #88ad95 !important;
+  border-color: #88ad95 !important;
+  opacity: 0.7 !important;
+  cursor: not-allowed;
+}
+
+.rejectButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  padding: 10px 18px;
+
+  color: #a12626 !important;
+  background-color: #fff5f5 !important;
+  border: 1px solid #d9a5a5 !important;
+
+  border-radius: 8px;
+  font-weight: 700;
+  opacity: 1 !important;
+  visibility: visible !important;
+  cursor: pointer;
+}
+
+.rejectButton:hover {
+  color: #8f1f1f !important;
+  background-color: #fde8e8 !important;
+  border-color: #c98282 !important;
+  opacity: 1 !important;
+}
+
+.rejectButton:focus,
+.rejectButton:focus-visible {
+  color: #8f1f1f !important;
+  background-color: #fde8e8 !important;
+  outline: 3px solid rgba(161, 38, 38, 0.18);
+  outline-offset: 2px;
+}
+
+.rejectButton:disabled {
+  color: #a66a6a !important;
+  background-color: #f8eeee !important;
+  border-color: #dfc3c3 !important;
+  opacity: 0.7 !important;
+  cursor: not-allowed;
+}

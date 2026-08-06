@@ -1,0 +1,3 @@
+[workspace]
+title = "local-job-board"
+packages = ["job_board_api"]

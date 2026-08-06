@@ -1,0 +1,9 @@
+[package]
+org = "pabloco"
+name = "job_board_api"
+version = "0.1.0"
+distribution = "2201.13.4"
+title = "job_board_api"
+
+[build-options]
+sticky = true

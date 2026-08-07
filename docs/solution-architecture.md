@@ -292,3 +292,9 @@ The frontend and backend are kept in one repository but deployed as separate com
 - API error responses should be standardized.
 - A formal OpenAPI contract should be maintained.
 - Auditing should record who reviewed each organization and job.
+
+## Proposed Solution Architecture
+![JobBridge proposed solution architecture](diagrams/solution-architecture.png)
+
+## Deployment Architecture
+![JobBridge deployment architecture](diagrams/deployment-architecture.png)

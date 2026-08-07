@@ -1,0 +1,15 @@
+dependencies:
+  serviceReferences:
+    - name: database:jobbridge
+      connectionConfig: 01f1926f-d489-1778-9d8e-aa6d79b2f43b
+      env:
+        - from: HostName
+          to: BAL_CONFIG_VAR_MYSQLHOST
+        - from: Port
+          to: BAL_CONFIG_VAR_MYSQLPORT
+        - from: Username
+          to: BAL_CONFIG_VAR_MYSQLUSER
+        - from: Password
+          to: BAL_CONFIG_VAR_MYSQLPASSWORD
+        - from: DatabaseName
+          to: BAL_CONFIG_VAR_MYSQLDATABASE

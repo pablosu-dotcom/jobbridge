@@ -4,11 +4,13 @@ import { AuthProvider } from "@asgardeo/auth-react";
 import App from "./App";
 import "./index.css";
 
+const appUrl = window.location.origin;
+
 const authConfig = {
   clientID: "IFeHNIzZA8Pg5wxNCHZGU7OR7ysa",
   baseUrl: "https://api.asgardeo.io/t/pabloco",
-  signInRedirectURL: "http://localhost:5173",
-  signOutRedirectURL: "http://localhost:5173",
+  signInRedirectURL: appUrl,
+  signOutRedirectURL: appUrl,
   scope: ["openid", "profile", "roles"],
 };
 

@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuthContext } from "@asgardeo/auth-react";
 import "./App.css";
 
+const API_BASE_URL =
+  window?.configs?.apiUrl ||
+  import.meta.env.VITE_API_BASE_URL ||
+  "/api";
+
 const emptyForm = {
   title: "",
   organization: "",
@@ -182,7 +187,7 @@ const canRegisterOrganization =
       setLoadingJobs(true);
       setError("");
 
-      const response = await fetch("/api/jobs");
+      const response = await fetch(`${API_BASE_URL}/jobs`);
 
       if (!response.ok) {
         throw new Error(`Unable to load jobs (${response.status})`);
@@ -210,7 +215,7 @@ const canRegisterOrganization =
     setError("");
 
     const response = await fetch(
-      `/api/organizations/me?ownerUserId=${encodeURIComponent(
+      `${API_BASE_URL}/organizations/me?ownerUserId=${encodeURIComponent(
         ownerUserId
       )}`
     );
@@ -255,7 +260,7 @@ async function loadPendingOrganizations() {
     const accessToken = await getAccessToken();
 
     const response = await fetch(
-      "/api/admin/organizations/pending",
+      `${API_BASE_URL}/admin/organizations/pending`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -299,7 +304,7 @@ async function loadPendingOrganizations() {
 
     const accessToken = await getAccessToken();
 
-    const response = await fetch("/api/admin/jobs/pending", {
+    const response = await fetch(`${API_BASE_URL}/admin/jobs/pending`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -330,7 +335,7 @@ async function approveJob(jobId) {
     const accessToken = await getAccessToken();
 
     const response = await fetch(
-      `/api/admin/jobs/${jobId}/approve`,
+      `${API_BASE_URL}/admin/jobs/${jobId}/approve`,
       {
         method: "PUT",
         headers: {
@@ -366,7 +371,7 @@ async function rejectJob(jobId) {
     const accessToken = await getAccessToken();
 
     const response = await fetch(
-      `/api/admin/jobs/${jobId}/reject`,
+      `${API_BASE_URL}/admin/jobs/${jobId}/reject`,
       {
         method: "PUT",
         headers: {
@@ -404,7 +409,7 @@ async function reviewOrganization(
     const accessToken = await getAccessToken();
 
     const response = await fetch(
-      `/api/admin/organizations/${organizationId}/${decision}`,
+      `${API_BASE_URL}/admin/organizations/${organizationId}/${decision}`,
       {
         method: "PUT",
         headers: {
@@ -540,7 +545,7 @@ async function submitOrganization(event) {
 
     const accessToken = await getAccessToken();
 
-    const response = await fetch("/api/organizations", {
+    const response = await fetch(`${API_BASE_URL}/organizations`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -602,7 +607,7 @@ async function submitOrganization(event) {
       setMessage("");
       setError("");
 
-      const response = await fetch("/api/jobs", {
+      const response = await fetch(`${API_BASE_URL}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -4,20 +4,20 @@
 
 JobBridge is a small, purpose-built job board that connects job seekers with approved member organizations.
 
-The solution is designed to demonstrate:
+The solution demonstrates:
 
 - Enterprise integration
 - API-based application design
 - Identity and access management
 - Approval workflows
-- Separation of frontend, integration, identity, API management, and persistence
-- A path from local development to managed cloud deployment
+- Managed cloud deployment
+- Separation of presentation, integration, identity, persistence, and future API governance
 
 ## 2. Business Problem
 
 Member organizations need a simple channel to publish jobs to a shared audience. Job seekers need an easy way to find active opportunities. Administrators need governance over which organizations and job postings become visible.
 
-A general-purpose recruitment platform would add unnecessary complexity for this use case. JobBridge focuses only on the workflows required by the participating organizations.
+A general-purpose recruitment platform would add unnecessary complexity. JobBridge focuses on the workflows required by participating organizations.
 
 ## 3. Business Requirements
 
@@ -27,13 +27,13 @@ A general-purpose recruitment platform would add unnecessary complexity for this
 - Search available jobs
 - View job details
 - Follow an external application link
-- Sign in when future personalized features require authentication
+- Sign in with Asgardeo
 
 ### Member organizations
 
 - Self-register
 - Submit organization details for approval
-- View the current organization application status
+- View organization application status
 - Post jobs after approval
 - Submit postings for administrator review
 
@@ -65,8 +65,8 @@ A general-purpose recruitment platform would add unnecessary complexity for this
                 | HTTP/JSON
                 v
 +------------------------------+
-| WSO2 Integrator: BI          |
 | JobBridge Integration API    |
+| WSO2 Integrator / Ballerina  |
 | - Job operations             |
 | - Organization operations    |
 | - Approval workflows         |
@@ -75,19 +75,57 @@ A general-purpose recruitment platform would add unnecessary complexity for this
                 |
                 v
 +------------------------------+
-| MySQL                        |
+| Managed MySQL                |
 | - jobs                       |
 | - organizations              |
 +------------------------------+
 
 Asgardeo
-  - Authentication
+  - OIDC authentication
   - Self-registration
-  - ID and access tokens
+  - User identity
   - Roles
 ```
 
-## 5. Target Deployment Architecture
+## 5. Current Deployed Architecture
+
+```text
+                         Asgardeo
+                    OIDC authentication
+                      and user roles
+                            |
+                            v
++---------------------------------------------------+
+| WSO2 Developer Platform                          |
+|                                                   |
+|  +---------------------------------------------+  |
+|  | JobBridge React/Vite Web Application       |  |
+|  |                                             |  |
+|  | Runtime config: /config.js                  |  |
+|  +----------------------+----------------------+  |
+|                         |                         |
+|                         | /choreo-apis/...        |
+|                         v                         |
+|  +---------------------------------------------+  |
+|  | JobBridge Integration API                  |  |
+|  | WSO2 Integrator / Ballerina                |  |
+|  |                                             |  |
+|  | Runtime configuration group                |  |
+|  +----------------------+----------------------+  |
+|                         |                         |
++-------------------------|-------------------------+
+                          |
+                          v
+                 Devant-managed MySQL
+                 +-------------------+
+                 | jobs              |
+                 | organizations     |
+                 +-------------------+
+```
+
+The backend API currently has OAuth 2 enforcement disabled. Asgardeo authenticates the user to the React application, while backend API authorization remains an MVP hardening item.
+
+## 6. Target Governed Architecture
 
 ```text
                          Asgardeo
@@ -103,24 +141,23 @@ Asgardeo
                               |
                               v
                   JobBridge React Web App
-                     Deployed in cloud
                               |
-                              | OAuth access token
                               v
                     Bijira API Gateway
-            Security, throttling, policies,
-              analytics and API governance
+            OAuth, policies, throttling,
+             analytics and API governance
                               |
                               v
              JobBridge Integration Service
-                 WSO2 Integrator: BI
-                    Deployed on Devant
+                 WSO2 Integrator / Ballerina
                               |
                               v
                     Managed MySQL
 ```
 
-## 6. Component Responsibilities
+Bijira is intentionally shown only in the **target** architecture because it is not part of the currently deployed MVP path.
+
+## 7. Component Responsibilities
 
 ### React/Vite frontend
 
@@ -131,23 +168,24 @@ Responsible for:
 - Form collection
 - Job search and display
 - Calling backend APIs
-- Sign-in and sign-out initiation
+- Initiating Asgardeo sign-in and sign-out
 - Displaying role-aware views
 
-The frontend must not be the final authority for authorization.
+The frontend is not intended to be the final authority for authorization.
 
-### WSO2 Integrator: BI service
+### JobBridge Integration API
 
 Responsible for:
 
-- Implementing JobBridge business workflows
+- Implementing business workflows
 - Validating requests
 - Persisting and retrieving data
-- Enforcing backend authorization
-- Deriving user identity from validated tokens
+- Organization and job lifecycle operations
 - Returning business-level HTTP responses
 
-### MySQL
+Future responsibilities include server-side token validation, role enforcement, and identity-derived ownership checks.
+
+### Managed MySQL
 
 Responsible for:
 
@@ -156,19 +194,19 @@ Responsible for:
 - Job postings
 - Job lifecycle status
 - Review metadata
-- Future audit and application data
+- Future audit/application data
 
 ### Asgardeo
 
 Responsible for:
 
-- User authentication
+- OIDC authentication
 - Self-registration
-- Token issuance
 - User identity
 - Application roles
+- Login branding
 
-Current roles:
+Current application roles:
 
 ```text
 ADMIN
@@ -176,15 +214,18 @@ MEMBER_ORGANIZATION
 JOB_SEEKER
 ```
 
-### Devant
+### WSO2 Developer Platform / Devant
 
-Planned responsibilities:
+Current responsibilities:
 
-- Build and deploy the integration
+- Build and deploy the Ballerina integration
+- Build and deploy the React web application
 - Runtime configuration and secrets
-- Environment promotion
-- Logs and observability
-- Managed database integration
+- Configuration groups
+- Managed MySQL provisioning and connectivity
+- Environment deployment
+- Application, gateway, and build logs
+- Project-level component connections
 
 ### Bijira
 
@@ -198,7 +239,7 @@ Planned responsibilities:
 - Analytics
 - Developer discovery and subscription
 
-## 7. Organization Lifecycle
+## 8. Organization Lifecycle
 
 ```text
 No application
@@ -213,9 +254,9 @@ PENDING
 ACTIVE    REJECTED
 ```
 
-An approved organization is allowed to participate as a member organization. At present, the Asgardeo role is assigned manually after approval.
+An approved organization is allowed to participate as a member organization. At present, role assignment remains a separate administrative step.
 
-## 8. Job Lifecycle
+## 9. Job Lifecycle
 
 ```text
 Job submitted
@@ -230,30 +271,32 @@ ACTIVE    REJECTED
 Visible in public job search
 ```
 
-Only `ACTIVE` jobs are returned by the public jobs endpoint.
+Only `ACTIVE` jobs are intended for the public job-search experience.
 
-## 9. Security Model
+## 10. Security Model
 
-### Current state
+### Current deployed state
 
-- React reads roles from the Asgardeo ID token.
-- React hides or shows views based on roles.
-- Access tokens are sent to protected API requests.
-- Some backend endpoints are not yet fully enforcing token-based authorization.
+- Asgardeo provides OIDC authentication for the React application.
+- React reads user identity/roles and renders role-aware views.
+- Redirect URLs are derived from `window.location.origin` so local and deployed environments can use the same code.
+- OAuth 2 enforcement on the JobBridge integration API is currently disabled.
+- The UI reaches the backend through the platform project connection.
+- Some authorization decisions remain in the frontend.
 - `ownerUserId` is currently accepted from the browser for organization operations.
 
 ### Target state
 
 - Bijira validates Asgardeo access tokens.
-- Backend also validates or trusts only verified gateway identity.
-- Backend derives the user ID from `sub`.
-- Admin endpoints require `ADMIN`.
+- The backend consumes only trusted/validated identity.
+- The backend derives the user ID from `sub`.
+- Admin operations require `ADMIN`.
 - Job creation requires `MEMBER_ORGANIZATION`.
 - A member can post only for the organization they own.
-- The browser never chooses another user's owner ID.
+- The browser cannot choose another user's owner ID.
 - Scopes complement roles.
 
-Suggested scopes:
+Suggested future scopes:
 
 ```text
 jobs:read
@@ -262,7 +305,50 @@ organizations:register
 admin:review
 ```
 
-## 10. Design Decisions
+## 11. Key Deployment Decisions
+
+### Monorepo with explicit component directories
+
+The frontend and backend remain in one GitHub repository, but the platform imports them independently:
+
+```text
+/job-board-ui
+/job_board_api
+```
+
+This is important for correct buildpack behavior.
+
+### Runtime database configuration
+
+Managed MySQL values are supplied through a configuration group rather than committed configuration files.
+
+### Runtime frontend API configuration
+
+The React application uses:
+
+```text
+public/config.js
+```
+
+with:
+
+```javascript
+window.configs = {
+  apiUrl: "/choreo-apis/jobbridge/jobboardapi/v1"
+};
+```
+
+This avoids hard-coding the backend URL throughout the application.
+
+### Asgardeo redirect portability
+
+The SPA uses:
+
+```javascript
+const appUrl = window.location.origin;
+```
+
+for sign-in and sign-out redirects so the same source works locally and in the deployed environment.
 
 ### Integration service rather than direct database access
 
@@ -270,31 +356,16 @@ The frontend never connects directly to MySQL. All business and data access goes
 
 ### Approval before publication
 
-Both organizations and jobs use a controlled status lifecycle. This prevents unapproved content from becoming public.
+Both organizations and jobs use controlled status lifecycles to prevent unapproved content from becoming public.
 
-### Separate identity provider
+## 12. Known Architecture Gaps
 
-Asgardeo centralizes registration, login, tokens, and roles rather than embedding identity logic in JobBridge.
-
-### Separate API management
-
-Bijira is planned as the consumer-facing API layer, while Devant operates the integration implementation.
-
-### Monorepo
-
-The frontend and backend are kept in one repository but deployed as separate components.
-
-## 11. Known Architecture Gaps
-
-- Jobs should reference `organizations.id` using `organization_id`.
+- API-level OAuth and authorization are not yet enforced.
+- Backend authorization should replace frontend-only trust for privileged operations.
+- Jobs should reference `organizations.id` through `organization_id`.
 - Organization approval should trigger role assignment.
-- Backend security must be completed before public production use.
+- Backend identity should come from a validated token rather than browser-supplied ownership data.
 - API error responses should be standardized.
-- A formal OpenAPI contract should be maintained.
+- A formal OpenAPI contract should be maintained and governed.
 - Auditing should record who reviewed each organization and job.
-
-## Proposed Solution Architecture
-![JobBridge proposed solution architecture](diagrams/solution-architecture.png)
-
-## Deployment Architecture
-![JobBridge deployment architecture](diagrams/deployment-architecture.png)
+- Production backup, monitoring, and alerting policies should be finalized.

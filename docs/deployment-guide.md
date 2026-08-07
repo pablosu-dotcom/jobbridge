@@ -2,16 +2,18 @@
 
 ## 1. Deployment Strategy
 
-Planned platform split:
+Current platform layout:
 
 | Concern | Platform |
 |---|---|
-| Frontend | Cloud web application |
-| Integration runtime | Devant |
-| Database | Devant-managed or external managed MySQL |
+| Frontend | WSO2 Developer Platform Web Application |
+| Integration runtime | WSO2 Developer Platform / Devant Integration |
+| Database | Devant-managed MySQL |
 | Identity | Asgardeo |
-| API management | Bijira |
+| API management | Bijira — planned |
 | Source control | GitHub |
+
+The frontend and backend are in the same JobBridge project but are deployed as separate components from a shared monorepo.
 
 ## 2. Repository Layout
 
@@ -23,11 +25,18 @@ local-job-board/
 └── README.md
 ```
 
-The repository is a monorepo. The backend and frontend are deployed independently from their respective source paths.
+Component directories:
+
+```text
+Backend:  /job_board_api
+Frontend: /job-board-ui
+```
+
+Using the correct component directory is important. The Ballerina buildpack must run with `job_board_api` as its build context so that `target/bin/job_board_api.jar` is discovered correctly.
 
 ## 3. GitHub Preparation
 
-Recommended `.gitignore`:
+Recommended `.gitignore` entries:
 
 ```gitignore
 .DS_Store
@@ -53,108 +62,178 @@ target/
 .vscode/
 ```
 
-Do not commit:
-
-```text
-job-board-ui/.env
-job_board_api/Config.toml
-```
+Do not commit real database credentials or local secrets.
 
 ## 4. Backend Configurables
 
-`config.bal`:
+Current `config.bal` values:
 
 ```ballerina
-configurable string dbHost = ?;
-configurable int dbPort = 3306;
-configurable string dbName = ?;
-configurable string dbUsername = ?;
-configurable string dbPassword = ?;
+configurable string mysqlUser = ?;
+configurable string mysqlHost = ?;
+configurable string mysqlPassword = ?;
+configurable string mysqlDatabase = ?;
+configurable int mysqlPort = ?;
 ```
 
-Local `Config.toml`:
+The MySQL client uses the configurable port rather than hard-coding `3306`, because the managed database may expose a different port.
 
-```toml
-dbHost = "localhost"
-dbPort = 3306
-dbName = "jobbridge"
-dbUsername = "root"
-dbPassword = "replace-with-local-password"
-```
+## 5. Managed MySQL
 
-In Devant, the real database values should be supplied as runtime configurations and secrets.
+### Provisioning
 
-## 5. Frontend Environment Configuration
+Use the Platform Engineer profile and create a managed MySQL database.
 
-Example `.env.example`:
-
-```env
-VITE_API_BASE_URL=http://localhost:9090
-VITE_ASGARDEO_CLIENT_ID=replace-me
-VITE_ASGARDEO_BASE_URL=https://api.asgardeo.io/t/replace-me
-```
-
-The frontend should use:
-
-```javascript
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-```
-
-and call:
-
-```javascript
-fetch(`${API_BASE_URL}/api/jobs`);
-```
-
-For cloud deployment, point `VITE_API_BASE_URL` first to the Devant service URL, and later to the Bijira gateway URL.
-
-## 6. Devant Deployment Sequence
-
-1. Create a Devant project named `JobBridge`.
-2. Connect the GitHub repository.
-3. Import `job_board_api` as a WSO2 Integrator: BI integration.
-4. Provision or connect a managed MySQL database.
-5. Create the `jobbridge` schema and tables.
-6. Add backend runtime configuration:
-   - `dbHost`
-   - `dbPort`
-   - `dbName`
-   - `dbUsername`
-   - `dbPassword`
-7. Deploy to Development.
-8. Test the deployed API directly.
-9. Promote a validated release to Production.
-
-## 7. Frontend Deployment Sequence
-
-1. Create a web application from `job-board-ui`.
-2. Build using:
-
-```bash
-npm run build
-```
-
-3. Use output directory:
+The deployed JobBridge database contains:
 
 ```text
-dist
+jobbridge
+├── jobs
+└── organizations
 ```
 
-4. Configure:
-   - `VITE_API_BASE_URL`
-   - `VITE_ASGARDEO_CLIENT_ID`
-   - `VITE_ASGARDEO_BASE_URL`
-5. Deploy.
-6. Confirm the public web URL.
-7. Confirm the logo is reachable at:
+The database schema must match the fields used by the Ballerina SQL queries. During deployment, an initial query failure identified a missing `salary_min` column; the managed schema was updated to match the application model.
+
+### Runtime configuration
+
+The working deployment uses a **configuration group** rather than hard-coded credentials or a committed `Config.toml`.
+
+The configuration group supplies:
 
 ```text
-https://<jobbridge-web-host>/jobbridge-logo.png
+mysqlUser
+mysqlHost
+mysqlPassword
+mysqlDatabase
+mysqlPort
 ```
 
-## 8. Asgardeo Updates
+This allows the backend to receive the managed database values without storing secrets in GitHub.
 
-After frontend deployment, add both local and cloud redirect URLs.
+## 6. Backend Deployment
+
+1. Create/import the backend integration from the GitHub repository.
+2. Set the component directory to:
+
+```text
+/job_board_api
+```
+
+3. Use the Ballerina / WSO2 Integrator build preset.
+4. Confirm the build produces:
+
+```text
+target/bin/job_board_api.jar
+```
+
+5. Link the MySQL configuration group.
+6. Deploy to the Development environment.
+7. Use Application Logs and Gateway Logs for troubleshooting.
+8. Verify the API with GET and POST operations.
+
+A previous startup failure:
+
+```text
+determine start command: when there is no default process a command is required
+```
+
+was caused by using the repository root as the build context. Setting the component directory to `/job_board_api` fixed the issue.
+
+## 7. Frontend Web Application
+
+Create a Web Application component from:
+
+```text
+/job-board-ui
+```
+
+Use:
+
+```text
+Build command: npm ci && npm run build
+Build path:    dist
+Node version:  22
+```
+
+A successful Vite build produces the static application under `dist/`.
+
+## 8. UI-to-API Connection
+
+The web application and backend integration are connected inside the same JobBridge project.
+
+The frontend uses the platform-generated route:
+
+```text
+/choreo-apis/jobbridge/jobboardapi/v1
+```
+
+The runtime configuration is stored in:
+
+```text
+job-board-ui/public/config.js
+```
+
+Example:
+
+```javascript
+window.configs = {
+  apiUrl: "/choreo-apis/jobbridge/jobboardapi/v1"
+};
+```
+
+The frontend resolves the API base URL with:
+
+```javascript
+const API_BASE_URL =
+  window?.configs?.apiUrl ||
+  import.meta.env.VITE_API_BASE_URL ||
+  "/api";
+```
+
+API calls use:
+
+```javascript
+fetch(`${API_BASE_URL}/jobs`);
+```
+
+instead of directly calling `/api/jobs`.
+
+For Vite, `public/config.js` is served as:
+
+```text
+/config.js
+```
+
+and `index.html` loads it before the React entry script:
+
+```html
+<script src="/config.js"></script>
+<script type="module" src="/src/main.jsx"></script>
+```
+
+## 9. Asgardeo OIDC
+
+The existing Asgardeo SPA integration remains in place.
+
+The redirect URL is determined at runtime:
+
+```javascript
+const appUrl = window.location.origin;
+```
+
+Configuration:
+
+```javascript
+const authConfig = {
+  clientID: "<asgardeo-client-id>",
+  baseUrl: "https://api.asgardeo.io/t/<tenant>",
+  signInRedirectURL: appUrl,
+  signOutRedirectURL: appUrl,
+  scope: ["openid", "profile", "roles"],
+};
+```
+
+Register both the local and deployed origins in Asgardeo.
 
 Example:
 
@@ -163,74 +242,86 @@ http://localhost:5173
 https://<jobbridge-web-host>
 ```
 
-Update:
+Redirect URLs must match exactly. A trailing `/` mismatch can cause:
 
-- Sign-in redirect URLs
-- Sign-out redirect URLs
-- Allowed origins when required
-- Application branding logo URL
+```text
+Application callback URL does not match the registered redirect URL
+```
 
-Logo URL:
+The JobBridge logo can be served from:
 
 ```text
 https://<jobbridge-web-host>/jobbridge-logo.png
 ```
 
-## 9. Bijira API Management
+and used as the Asgardeo branding logo URL.
 
-After the Devant service is stable:
+## 10. Current API Security
+
+For the MVP, OAuth 2 enforcement on the JobBridge API is disabled in the Integration Platform security configuration.
+
+This means:
+
+```text
+Asgardeo
+   |
+   | OIDC login for the React application
+   v
+React UI
+   |
+   | Project connection
+   v
+JobBridge API
+```
+
+Asgardeo currently authenticates the user to the application, but the backend API is not yet enforcing Asgardeo access tokens.
+
+A `401` with WSO2 code `900901` and `WWW-Authenticate: invalid_token` was resolved by disabling OAuth 2 enforcement on the API for this MVP phase.
+
+## 11. Observability
+
+Use:
+
+- **Gateway Logs** to confirm routing, request path, response code, and gateway behavior.
+- **Application Logs** to see Ballerina runtime and SQL errors.
+- Build logs to diagnose component-directory and buildpack issues.
+
+Example application-level database errors are more useful than gateway `500` responses because they expose the underlying SQL exception.
+
+## 12. Bijira API Management — Planned
+
+After the MVP is stable:
 
 1. Create the JobBridge API in Bijira.
-2. Use the Devant service URL as the backend.
-3. Configure:
-   - Name: `JobBridge API`
-   - Context: `/jobbridge`
-   - Version: `1.0`
-4. Import or create an OpenAPI contract.
-5. Apply OAuth security.
-6. Configure scopes:
+2. Use the integration service as the backend.
+3. Import or maintain an OpenAPI contract.
+4. Enable OAuth security.
+5. Add scopes such as:
    - `jobs:read`
    - `jobs:write`
    - `organizations:register`
    - `admin:review`
-7. Add throttling and policies.
-8. Publish the API.
-9. Point the React frontend to the Bijira gateway URL.
+6. Apply throttling and policies.
+7. Add analytics and governance.
+8. Update the frontend connection to the governed gateway path as appropriate.
 
-## 10. CORS
+## 13. Production Readiness Checklist
 
-When frontend and API use different hosts, allow:
-
-```text
-http://localhost:5173
-https://<jobbridge-web-host>
-```
-
-Do not use unrestricted `*` for authenticated production requests.
-
-## 11. Environment Separation
-
-Use separate Development and Production databases:
-
-```text
-jobbridge_dev
-jobbridge_prod
-```
-
-Do not point both environments to the same database.
-
-## 12. Production Readiness Checklist
-
-- [ ] Access tokens validated
+- [x] Frontend deployed
+- [x] Backend integration deployed
+- [x] Managed MySQL connected
+- [x] Database credentials kept out of GitHub
+- [x] Asgardeo OIDC login working
+- [x] JobBridge logo configured in Asgardeo
+- [x] UI-to-API project connection working
+- [ ] Access tokens validated by API layer
 - [ ] Roles enforced by backend
-- [ ] User identity derived from token
-- [ ] Admin endpoints protected
-- [ ] Organization ownership enforced
-- [ ] Database credentials stored as secrets
-- [ ] CORS restricted
-- [ ] TLS used end to end
-- [ ] Backups configured
-- [ ] Logs and alerts enabled
-- [ ] OpenAPI contract published
-- [ ] Error responses standardized
+- [ ] User identity derived from validated token
+- [ ] Admin endpoints protected server-side
+- [ ] Organization ownership enforced server-side
+- [ ] CORS/security policy finalized for production
+- [ ] Production backups configured
+- [ ] Logs and alerts operationalized
+- [ ] OpenAPI contract governed
 - [ ] Audit records captured
+- [ ] Bijira API management enabled

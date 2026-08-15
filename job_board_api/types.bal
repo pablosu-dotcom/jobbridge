@@ -55,3 +55,31 @@ type Organization record {|
     string description?;
     string status;
 |};
+
+public type AiMatchjobsPayload record {|
+    string profile;
+|};
+
+type AiMessage record {
+    string role;
+    string content;
+};
+
+type AiChoice record {
+    int index;
+    AiMessage message;
+};
+
+type AiChatResponse record {
+    AiChoice[] choices;
+};
+
+type JobMatch record {|
+    string jobId;
+    int score;
+    string reason;
+|};
+
+type MatchJobsResponse record {|
+    JobMatch[] matches;
+|};

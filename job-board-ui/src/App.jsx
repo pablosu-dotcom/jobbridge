@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuthContext } from "@asgardeo/auth-react";
 import "./App.css";
-
-const API_BASE_URL =
-  window?.configs?.apiUrl ||
-  import.meta.env.VITE_API_BASE_URL ||
-  "/api";
+import { API_BASE_URL } from "./config";
+import { matchJobs } from "./services/jobService";
 
 const emptyForm = {
   title: "",
@@ -80,6 +77,9 @@ export default function App() {
   const [organizationForm, setOrganizationForm] = useState(emptyOrganizationForm);
 
   const [search, setSearch] = useState("");
+  const [matcherProfile, setMatcherProfile] = useState("");
+  const [jobMatches, setJobMatches] = useState([]);
+  const [hasMatchedJobs, setHasMatchedJobs] = useState(false);
   const [activeView, setActiveView] = useState("jobs");
   const [form, setForm] = useState(emptyForm);
 
@@ -90,9 +90,11 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [submittingOrganization, setSubmittingOrganization] = useState(false);
   const [loadingRoles, setLoadingRoles] = useState(false);
+  const [loadingMatches, setLoadingMatches] = useState(false);
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [matcherError, setMatcherError] = useState("");
 
   const isAuthenticated = state.isAuthenticated;
   const isAdmin = roles.includes("ADMIN");
@@ -499,6 +501,56 @@ async function rejectOrganization(organizationId) {
     });
   }, [jobs, search]);
 
+  const matchedJobs = useMemo(() => {
+    const jobsById = new Map(
+      jobs.map((job) => [String(job.id), job])
+    );
+
+    return jobMatches
+      .map((match) => {
+        const job = jobsById.get(String(match.jobId));
+
+        return job ? { ...job, match } : null;
+      })
+      .filter(Boolean)
+      .sort(
+        (first, second) =>
+          Number(second.match.score) - Number(first.match.score)
+      );
+  }, [jobMatches, jobs]);
+
+  async function handleJobMatch(event) {
+    event.preventDefault();
+
+    const profile = matcherProfile.trim();
+
+    if (!profile) {
+      setMatcherError("Please describe what you are looking for.");
+      setHasMatchedJobs(false);
+      setJobMatches([]);
+      return;
+    }
+
+    try {
+      setLoadingMatches(true);
+      setMatcherError("");
+      setHasMatchedJobs(false);
+
+      const matches = await matchJobs(profile);
+
+      setJobMatches(matches);
+      setHasMatchedJobs(true);
+    } catch (err) {
+      console.error("Unable to find matching jobs:", err);
+      setJobMatches([]);
+      setMatcherError(
+        err.message || "Unable to find matching jobs. Please try again."
+      );
+    } finally {
+      setLoadingMatches(false);
+    }
+  }
+
   function openApplication(job) {
     if (!job.applyUrl) {
       alert("Application URL not configured.");
@@ -825,6 +877,78 @@ if (view === "admin") {
                 }
               />
             </div>
+
+            <section className="jobMatcher" aria-labelledby="job-matcher-heading">
+              <h2 id="job-matcher-heading">AI Job Matcher</h2>
+              <p className="matcherIntroduction">
+                Tell us about your skills, experience, preferred location,
+                and the type of work you want.
+              </p>
+
+              <form onSubmit={handleJobMatch}>
+                <label htmlFor="matcher-profile">Your job preferences</label>
+                <textarea
+                  id="matcher-profile"
+                  rows="5"
+                  value={matcherProfile}
+                  onChange={(event) => setMatcherProfile(event.target.value)}
+                  placeholder="For example: I have five years of customer service experience and want part-time work in Coral Gables."
+                />
+                <button
+                  type="submit"
+                  className="matchButton"
+                  disabled={loadingMatches || loadingJobs}
+                >
+                  {loadingMatches ? "Finding Matches..." : "Find Matching Jobs"}
+                </button>
+              </form>
+
+              {matcherError && (
+                <div className="matcherError" role="alert">
+                  {matcherError}
+                </div>
+              )}
+
+              {loadingMatches && (
+                <div className="matcherState">Finding your best matches...</div>
+              )}
+
+              {!loadingMatches && hasMatchedJobs && matchedJobs.length === 0 && (
+                <div className="matcherState">
+                  No matching jobs were found among the currently available jobs.
+                </div>
+              )}
+
+              {!loadingMatches && matchedJobs.length > 0 && (
+                <div className="matchResults">
+                  <h3>Recommended Jobs</h3>
+                  {matchedJobs.map((job) => (
+                    <article key={job.id} className="jobCard matchCard">
+                      <div className="jobInfo">
+                        <div className="matchHeading">
+                          <h3>{job.title}</h3>
+                          <span className="matchScore">
+                            {job.match.score}% match
+                          </span>
+                        </div>
+                        <p className="organization">{job.organization}</p>
+                        <p className="details">{job.location}</p>
+                        <p className="matchReason">{job.match.reason}</p>
+                      </div>
+                      <div className="jobActions">
+                        <button
+                          type="button"
+                          className="applyButton"
+                          onClick={() => openApplication(job)}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
 
             <h2>Available Jobs</h2>
 

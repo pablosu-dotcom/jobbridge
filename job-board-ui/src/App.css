@@ -180,6 +180,131 @@ body{
 }
 
 /* ===========================
+   AI Job Matcher
+=========================== */
+
+.jobMatcher {
+  margin-bottom: 40px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+}
+
+.jobMatcher h2 {
+  margin-bottom: 8px;
+}
+
+.matcherIntroduction {
+  margin-bottom: 20px;
+  color: var(--gray);
+  line-height: 1.5;
+}
+
+.jobMatcher label {
+  display: block;
+  color: var(--primary);
+  font-weight: bold;
+}
+
+.jobMatcher textarea {
+  width: 100%;
+  margin: 8px 0 16px;
+  padding: 13px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+}
+
+.jobMatcher textarea:focus {
+  border-color: var(--primary);
+}
+
+.matchButton {
+  padding: 12px 22px;
+  border: none;
+  border-radius: 8px;
+  background: var(--secondary);
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.matchButton:hover:not(:disabled) {
+  background: #24883d;
+}
+
+.matchButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.matcherState,
+.matcherError {
+  margin-top: 20px;
+  padding: 14px 18px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.matcherState {
+  color: var(--gray);
+  background: var(--background);
+  border: 1px dashed var(--border);
+}
+
+.matcherError {
+  color: #a12626;
+  background: #fff0f0;
+  border: 1px solid #efc0c0;
+}
+
+.matchResults {
+  margin-top: 28px;
+}
+
+.matchResults > h3 {
+  margin-bottom: 16px;
+  color: var(--primary);
+  font-size: 20px;
+}
+
+.matchCard:last-child {
+  margin-bottom: 0;
+}
+
+.matchHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.matchScore {
+  flex-shrink: 0;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: #eaf8ef;
+  color: #1f6d36;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.matchReason {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: #444;
+  line-height: 1.5;
+}
+
+/* ===========================
    Job Cards
 =========================== */
 

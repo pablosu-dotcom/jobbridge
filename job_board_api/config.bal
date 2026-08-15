@@ -4,3 +4,4 @@ configurable string mysqlPassword = ?;
 configurable string mysqlDatabase = ?;
 configurable int mysqlPort = ?;
 configurable string aiGatewayApiKey = ?;
+configurable string aiGatewayUrl = ?;

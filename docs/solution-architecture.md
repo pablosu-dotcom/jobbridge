@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-JobBridge is a small, purpose-built job board that connects job seekers with approved member organizations.
+JobBridge is a purpose-built job board connecting job seekers with approved member organizations. The current MVP demonstrates traditional application integration plus an AI-assisted matching flow governed through WSO2 AI Gateway.
 
 The solution demonstrates:
 
@@ -11,13 +11,15 @@ The solution demonstrates:
 - Identity and access management
 - Approval workflows
 - Managed cloud deployment
-- Separation of presentation, integration, identity, persistence, and future API governance
+- AI-assisted job matching
+- LLM governance through WSO2 AI Gateway
+- Separation of presentation, integration, identity, persistence, API management, and AI runtime concerns
 
 ## 2. Business Problem
 
 Member organizations need a simple channel to publish jobs to a shared audience. Job seekers need an easy way to find active opportunities. Administrators need governance over which organizations and job postings become visible.
 
-A general-purpose recruitment platform would add unnecessary complexity. JobBridge focuses on the workflows required by participating organizations.
+The AI extension addresses a second problem: even a small list of jobs can be difficult to evaluate quickly. JobBridge lets a job seeker provide a short profile and receives ranked recommendations with explanations based only on currently active jobs.
 
 ## 3. Business Requirements
 
@@ -28,6 +30,9 @@ A general-purpose recruitment platform would add unnecessary complexity. JobBrid
 - View job details
 - Follow an external application link
 - Sign in with Asgardeo
+- Describe experience, interests, location, and preferred work
+- Receive AI-ranked job recommendations
+- Understand why each job was recommended
 
 ### Member organizations
 
@@ -47,38 +52,44 @@ A general-purpose recruitment platform would add unnecessary complexity. JobBrid
 ## 4. Current Logical Architecture
 
 ```text
-+------------------------------+
-| Job seekers                  |
-| Member organizations         |
-| Administrators               |
-+---------------+--------------+
++--------------------------------+
+| Job seekers                    |
+| Member organizations           |
+| Administrators                 |
++---------------+----------------+
                 |
                 v
-+------------------------------+
-| JobBridge React/Vite UI      |
-| - Job search                 |
-| - Registration               |
-| - Job submission             |
-| - Admin review               |
-+---------------+--------------+
++--------------------------------+
+| JobBridge React/Vite UI        |
+| - Job search                   |
+| - AI job matcher               |
+| - Registration                 |
+| - Job submission               |
+| - Admin review                 |
++---------------+----------------+
                 |
                 | HTTP/JSON
                 v
-+------------------------------+
-| JobBridge Integration API    |
-| WSO2 Integrator / Ballerina  |
-| - Job operations             |
-| - Organization operations    |
-| - Approval workflows         |
-| - MySQL access               |
-+---------------+--------------+
-                |
-                v
-+------------------------------+
-| Managed MySQL                |
-| - jobs                       |
-| - organizations              |
-+------------------------------+
++--------------------------------+
+| JobBridge Integration API      |
+| WSO2 Integrator / Ballerina    |
+| - Job operations               |
+| - Organization operations      |
+| - Approval workflows           |
+| - Active-job retrieval         |
+| - AI orchestration             |
++-----------+--------------------+
+            |                |
+            |                | OpenAI-compatible API
+            v                v
++--------------------+   +--------------------------+
+| Managed MySQL      |   | WSO2 AI Gateway         |
+| - jobs             |   | App LLM Proxy           |
+| - organizations    |   | policies / observability|
++--------------------+   +------------+-------------+
+                                     |
+                                     v
+                                  OpenAI
 
 Asgardeo
   - OIDC authentication
@@ -90,115 +101,149 @@ Asgardeo
 ## 5. Current Deployed Architecture
 
 ```text
-                         Asgardeo
-                    OIDC authentication
-                      and user roles
-                            |
-                            v
-+---------------------------------------------------+
-| WSO2 Developer Platform                          |
-|                                                   |
-|  +---------------------------------------------+  |
-|  | JobBridge React/Vite Web Application       |  |
-|  |                                             |  |
-|  | Runtime config: /config.js                  |  |
-|  +----------------------+----------------------+  |
-|                         |                         |
-|                         | /choreo-apis/...        |
-|                         v                         |
-|  +---------------------------------------------+  |
-|  | JobBridge Integration API                  |  |
-|  | WSO2 Integrator / Ballerina                |  |
-|  |                                             |  |
-|  | Runtime configuration group                |  |
-|  +----------------------+----------------------+  |
-|                         |                         |
-+-------------------------|-------------------------+
-                          |
-                          v
-                 Devant-managed MySQL
-                 +-------------------+
-                 | jobs              |
-                 | organizations     |
-                 +-------------------+
+                             Asgardeo
+                        OIDC authentication
+                          and user roles
+                                |
+                                v
++----------------------------------------------------------------+
+| WSO2 Developer Platform                                        |
+|                                                                |
+|  +----------------------------------------------------------+  |
+|  | JobBridge React/Vite Web Application                    |  |
+|  | - runtime /config.js                                    |  |
+|  | - AI Job Matcher UI                                     |  |
+|  +-------------------------+--------------------------------+  |
+|                            |                                   |
+|                            | /choreo-apis/...                   |
+|                            v                                   |
+|  +----------------------------------------------------------+  |
+|  | JobBridge Integration API                               |  |
+|  | WSO2 Integrator / Ballerina                             |  |
+|  | - getActiveJobs()                                       |  |
+|  | - POST /api/ai/match-jobs                               |  |
+|  | - runtime configuration / secrets                       |  |
+|  +-----------------+----------------------+-----------------+  |
+|                    |                      |                    |
++--------------------|----------------------|--------------------+
+                     |                      |
+                     v                      | HTTPS + X-API-Key
+              Managed MySQL                 v
+              +--------------+     +-----------------------------+
+              | jobs         |     | Google Cloud VM             |
+              | organizations|     | Nginx :443                   |
+              +--------------+     | WSO2 AI Gateway 1.2         |
+                                   | App LLM Proxy:               |
+                                   | jobbridge-ai-prod            |
+                                   +--------------+--------------+
+                                                  |
+                                                  v
+                                                OpenAI
+                                             gpt-4o-mini
 ```
 
-The backend API currently has OAuth 2 enforcement disabled. Asgardeo authenticates the user to the React application, while backend API authorization remains an MVP hardening item.
+### AI Workspace control plane
 
-## 6. Target Governed Architecture
+WSO2 AI Workspace is the control plane for the AI Gateway runtime. It manages:
+
+- LLM Provider configuration
+- App LLM Proxies
+- API keys
+- Gateway registration
+- Proxy deployment
+- AI policies/guardrails
+- Usage and observability capabilities
+
+The production AI Gateway runtime itself is self-hosted on a Google Compute Engine VM.
+
+## 6. AI Job Matching Flow
 
 ```text
-                         Asgardeo
-                  Authentication and roles
-                              |
-                              v
-+----------------------+      |      +----------------------+
-| Job seekers          |      |      | Administrators       |
-| Member organizations |------+------|                      |
-+----------+-----------+             +----------+-----------+
-           |                                      |
-           +------------------+-------------------+
-                              |
-                              v
-                  JobBridge React Web App
-                              |
-                              v
-                    Bijira API Gateway
-            OAuth, policies, throttling,
-             analytics and API governance
-                              |
-                              v
-             JobBridge Integration Service
-                 WSO2 Integrator / Ballerina
-                              |
-                              v
-                    Managed MySQL
+Job seeker profile
+       |
+       v
+React POST /ai/match-jobs
+       |
+       v
+Integrator getActiveJobs()
+       |
+       +------> Managed MySQL
+       |        WHERE status = 'ACTIVE'
+       |
+       v
+Build prompt:
+- candidate profile
+- active jobs
+- output contract
+- min score 60
+- max 5 matches
+       |
+       v
+WSO2 AI Gateway
+jobbridge-ai-prod
+       |
+       v
+OpenAI gpt-4o-mini
+       |
+       v
+Typed response parsing
+       |
+       v
+{
+  "matches": [
+    {
+      "jobId": "...",
+      "score": 80,
+      "reason": "..."
+    }
+  ]
+}
+       |
+       v
+React joins jobId to existing jobs state
 ```
 
-Bijira is intentionally shown only in the **target** architecture because it is not part of the currently deployed MVP path.
+The AI service does not create new jobs or alter the database. It ranks only active jobs supplied by JobBridge.
 
 ## 7. Component Responsibilities
 
 ### React/Vite frontend
 
-Responsible for:
-
-- User interface
-- Navigation
-- Form collection
+- User interface and navigation
 - Job search and display
-- Calling backend APIs
-- Initiating Asgardeo sign-in and sign-out
-- Displaying role-aware views
+- Forms and role-aware views
+- Asgardeo sign-in/sign-out
+- Candidate profile input
+- Calling `/ai/match-jobs`
+- Joining returned `jobId` values to already-loaded jobs
+- Rendering match score and explanation
 
-The frontend is not intended to be the final authority for authorization.
+The frontend contains no OpenAI or AI Gateway credentials.
 
 ### JobBridge Integration API
 
-Responsible for:
-
-- Implementing business workflows
-- Validating requests
-- Persisting and retrieving data
+- Business workflows
+- Request validation
+- Persistence and retrieval
 - Organization and job lifecycle operations
-- Returning business-level HTTP responses
+- Reusable `getActiveJobs()` logic
+- AI prompt construction
+- Calling WSO2 AI Gateway
+- Parsing the OpenAI-compatible response into the JobBridge response contract
 
-Future responsibilities include server-side token validation, role enforcement, and identity-derived ownership checks.
+Future responsibilities include stronger server-side token validation, role enforcement, and identity-derived ownership checks.
 
 ### Managed MySQL
-
-Responsible for:
 
 - Organization applications
 - Organization lifecycle status
 - Job postings
 - Job lifecycle status
 - Review metadata
-- Future audit/application data
+
+AI matching reads active jobs but does not persist AI results.
 
 ### Asgardeo
-
-Responsible for:
 
 - OIDC authentication
 - Self-registration
@@ -206,7 +251,7 @@ Responsible for:
 - Application roles
 - Login branding
 
-Current application roles:
+Current roles:
 
 ```text
 ADMIN
@@ -214,30 +259,53 @@ MEMBER_ORGANIZATION
 JOB_SEEKER
 ```
 
-### WSO2 Developer Platform / Devant
+### WSO2 Developer Platform
 
-Current responsibilities:
-
-- Build and deploy the Ballerina integration
-- Build and deploy the React web application
+- Build/deploy Ballerina integration
+- Build/deploy React web app
 - Runtime configuration and secrets
-- Configuration groups
-- Managed MySQL provisioning and connectivity
+- Managed MySQL connectivity
 - Environment deployment
-- Application, gateway, and build logs
-- Project-level component connections
+- Logs
+- Project-level component connectivity
 
-### Bijira
+### WSO2 AI Workspace
 
-Planned responsibilities:
+- OpenAI LLM Provider configuration
+- AI Gateway registration/control
+- App LLM Proxy configuration
+- API keys
+- AI policies, guardrails, and observability
 
-- API gateway
-- API lifecycle
-- OAuth enforcement
-- Scopes and policies
+### WSO2 AI Gateway
+
+- Runtime LLM traffic mediation
+- Inbound API key enforcement
+- Routing to OpenAI provider
+- AI policies/guardrails when configured
+- Governed control point between JobBridge and the LLM provider
+
+Production runtime:
+
+```text
+Google Compute Engine VM
+  -> Nginx public TLS endpoint
+  -> WSO2 AI Gateway 1.2
+  -> jobbridge-ai-prod
+  -> OpenAI
+```
+
+### WSO2 API Platform / Bijira
+
+A separate JobBridge API proxy has been implemented and tested with:
+
+- Built-in STS OAuth2
+- Resource-level security
 - Rate limiting
-- Analytics
-- Developer discovery and subscription
+- Response policies
+- Developer Portal publication/subscription
+
+It is currently a governance/security lab path, not the active path used by the deployed React application.
 
 ## 8. Organization Lifecycle
 
@@ -254,7 +322,7 @@ PENDING
 ACTIVE    REJECTED
 ```
 
-An approved organization is allowed to participate as a member organization. At present, role assignment remains a separate administrative step.
+Role assignment remains a separate administrative step after approval.
 
 ## 9. Job Lifecycle
 
@@ -268,35 +336,36 @@ PENDING
 ACTIVE    REJECTED
   |
   v
-Visible in public job search
+Visible in public search
+and eligible for AI matching
 ```
 
-Only `ACTIVE` jobs are intended for the public job-search experience.
+Only `ACTIVE` jobs are used by public search and AI matching.
 
 ## 10. Security Model
 
 ### Current deployed state
 
-- Asgardeo provides OIDC authentication for the React application.
-- React reads user identity/roles and renders role-aware views.
-- Redirect URLs are derived from `window.location.origin` so local and deployed environments can use the same code.
-- OAuth 2 enforcement on the JobBridge integration API is currently disabled.
-- The UI reaches the backend through the platform project connection.
-- Some authorization decisions remain in the frontend.
-- `ownerUserId` is currently accepted from the browser for organization operations.
+- Asgardeo authenticates the React SPA.
+- React renders role-aware views.
+- WSO2 Developer Platform Managed Authentication is disabled for the UI.
+- OAuth2 enforcement is disabled on the deployed JobBridge backend path.
+- The UI reaches the backend through the Developer Platform project connection.
+- `aiGatewayApiKey` is stored as a backend secret and is never sent to the browser.
+- The backend calls the production AI Gateway over trusted HTTPS.
+- The AI Gateway enforces `X-API-Key` for the App LLM Proxy.
 
-### Target state
+### Target application/API state
 
-- Bijira validates Asgardeo access tokens.
-- The backend consumes only trusted/validated identity.
-- The backend derives the user ID from `sub`.
+- API gateway validates end-user access tokens.
+- Backend consumes only trusted identity.
+- User ID is derived from `sub`.
 - Admin operations require `ADMIN`.
 - Job creation requires `MEMBER_ORGANIZATION`.
-- A member can post only for the organization they own.
-- The browser cannot choose another user's owner ID.
+- Ownership is enforced server-side.
 - Scopes complement roles.
 
-Suggested future scopes:
+Suggested scopes:
 
 ```text
 jobs:read
@@ -305,67 +374,42 @@ organizations:register
 admin:review
 ```
 
-## 11. Key Deployment Decisions
+## 11. Key Design Decisions
 
-### Monorepo with explicit component directories
+### Keep LLM credentials out of the browser
 
-The frontend and backend remain in one GitHub repository, but the platform imports them independently:
+React calls only the JobBridge backend. The OpenAI credential remains behind the WSO2 LLM Provider, and the AI Gateway proxy key remains in backend runtime secrets.
 
-```text
-/job-board-ui
-/job_board_api
-```
+### Use AI Gateway rather than direct OpenAI calls
 
-This is important for correct buildpack behavior.
+This creates a governed LLM runtime boundary and allows future policies, guardrails, analytics, rate controls, and provider abstraction.
 
-### Runtime database configuration
+### Reuse active-job retrieval
 
-Managed MySQL values are supplied through a configuration group rather than committed configuration files.
+`getActiveJobs()` is reused by normal job listing logic and AI matching instead of duplicating SQL/business logic.
 
-### Runtime frontend API configuration
+### Constrain AI output
 
-The React application uses:
+The prompt requires JSON-only output with `jobId`, `score`, and `reason`, returns at most 5 matches, and filters out scores below 60.
 
-```text
-public/config.js
-```
+### Self-hosted gateway runtime
 
-with:
+The production AI Gateway runs on a dedicated GCP VM while AI Workspace remains the SaaS control plane. Nginx terminates public HTTPS and proxies to the local gateway listener.
 
-```javascript
-window.configs = {
-  apiUrl: "/choreo-apis/jobbridge/jobboardapi/v1"
-};
-```
+### Runtime frontend configuration
 
-This avoids hard-coding the backend URL throughout the application.
-
-### Asgardeo redirect portability
-
-The SPA uses:
-
-```javascript
-const appUrl = window.location.origin;
-```
-
-for sign-in and sign-out redirects so the same source works locally and in the deployed environment.
-
-### Integration service rather than direct database access
-
-The frontend never connects directly to MySQL. All business and data access goes through the integration API.
-
-### Approval before publication
-
-Both organizations and jobs use controlled status lifecycles to prevent unapproved content from becoming public.
+Local Vite development uses `/api`; deployment uses `window.configs.apiUrl`.
 
 ## 12. Known Architecture Gaps
 
-- API-level OAuth and authorization are not yet enforced.
+- API-level end-user OAuth and authorization are not enforced on the deployed backend path.
 - Backend authorization should replace frontend-only trust for privileged operations.
 - Jobs should reference `organizations.id` through `organization_id`.
 - Organization approval should trigger role assignment.
-- Backend identity should come from a validated token rather than browser-supplied ownership data.
+- Backend identity should come from validated tokens rather than browser-supplied ownership data.
 - API error responses should be standardized.
-- A formal OpenAPI contract should be maintained and governed.
+- A formal governed OpenAPI contract should be maintained.
 - Auditing should record who reviewed each organization and job.
-- Production backup, monitoring, and alerting policies should be finalized.
+- Production backup, monitoring, alerting, and AI Gateway VM operations should be formalized.
+- AI matching is advisory and should not be treated as an automated hiring decision.
+

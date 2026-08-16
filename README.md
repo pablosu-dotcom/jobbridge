@@ -1,23 +1,24 @@
 # JobBridge
 
-JobBridge is a minimal, purpose-built job board for member organizations and job seekers. It provides a public job-search experience, organization onboarding, controlled job publishing, and administrator review.
+JobBridge is a minimal, purpose-built job board for member organizations and job seekers. It provides public job discovery, organization onboarding, controlled job publishing, administrator review, and AI-assisted job matching.
 
 ## Current Status
 
-The MVP is deployed and working in the WSO2 Developer Platform with:
+The MVP is deployed and working with:
 
 - React + Vite web application
 - WSO2 Integrator / Ballerina backend integration
-- Devant-managed MySQL persistence
+- Managed MySQL persistence
 - Asgardeo OIDC authentication and self-registration
 - Role-aware navigation
 - Organization approval and rejection
 - Job approval and rejection
+- AI job matching through WSO2 AI Gateway and OpenAI
 - Project-level UI-to-API connectivity through `/choreo-apis/...`
-- Runtime database configuration through a configuration group
+- Runtime configuration and secrets supplied by the WSO2 Developer Platform
 - JobBridge branding in the Asgardeo login experience
 
-Bijira API management is planned as a later hardening/governance phase.
+A separate WSO2 API Platform/Bijira proxy has also been built and tested with OAuth2 using the built-in STS, policies, throttling, and Developer Portal subscription. It is not currently in the deployed browser-to-backend path.
 
 ## Current Deployment Overview
 
@@ -28,15 +29,25 @@ Users
 JobBridge React/Vite Web Application
 WSO2 Developer Platform
   |
-  | /choreo-apis/jobbridge/jobboardapi/v1
+  | /choreo-apis/pablosu-jobbridge/jobboardapi/v1
   v
 JobBridge Integration API
 WSO2 Integrator / Ballerina
+  | \
+  |  \ POST /api/ai/match-jobs
+  |   \
+  |    v
+  |  WSO2 AI Gateway 1.2
+  |  Google Cloud VM + Nginx/TLS
+  |    |
+  |    v
+  |  App LLM Proxy: jobbridge-ai-prod
+  |    |
+  |    v
+  |  OpenAI (gpt-4o-mini)
   |
-  | Runtime configuration group
   v
-Devant-managed MySQL
-  |
+Managed MySQL
   +-- jobs
   +-- organizations
 
@@ -48,7 +59,9 @@ Asgardeo
   +-- JobBridge login branding
 ```
 
-The React application uses Asgardeo for user authentication. OAuth 2 enforcement on the JobBridge API is currently disabled for the MVP. API-level OAuth, scopes, and stronger backend authorization are planned for a later phase.
+The React application authenticates users directly with Asgardeo. WSO2 Developer Platform Managed Authentication is disabled for the web application to avoid introducing a second authentication layer.
+
+OAuth2 enforcement on the currently deployed JobBridge backend path is disabled for the MVP. API-level OAuth, scopes, and stronger server-side authorization remain hardening items.
 
 ## User Roles
 
@@ -68,6 +81,8 @@ A newly self-registered user may temporarily have no JobBridge role while an org
 - Search jobs
 - Open external job application links
 - Sign in and sign out with Asgardeo
+- Enter a candidate profile and request AI-ranked job matches
+- View match percentage and AI-generated reason for each recommended job
 
 ### Member organization experience
 
@@ -84,11 +99,33 @@ A newly self-registered user may temporarily have no JobBridge role while an org
 - View pending job postings
 - Approve or reject jobs
 
+### AI job matching
+
+The UI sends a short candidate profile to:
+
+```http
+POST /api/ai/match-jobs
+```
+
+The backend:
+
+1. Calls the reusable `getActiveJobs()` function.
+2. Reads active jobs from MySQL.
+3. Builds a prompt containing the candidate profile and active jobs.
+4. Calls the WSO2 AI Gateway App LLM Proxy.
+5. Uses OpenAI `gpt-4o-mini` to rank matches.
+6. Returns only matches with score `>= 60`, with at most 5 results.
+7. The React app joins each returned `jobId` to its already-loaded jobs state; it does not re-fetch individual jobs.
+
+See [AI Job Matching](docs/ai-job-matching.md).
+
 ## API Summary
 
 ```http
 GET  /api/jobs
 POST /api/jobs
+
+POST /api/ai/match-jobs
 
 POST /api/organizations
 GET  /api/organizations/me?ownerUserId={userId}
@@ -102,19 +139,20 @@ PUT /api/admin/organizations/{id}/approve
 PUT /api/admin/organizations/{id}/reject
 ```
 
-The deployed web application reaches the backend through the project connection path:
+The deployed web application reaches the backend through:
 
 ```text
-/choreo-apis/jobbridge/jobboardapi/v1
+/choreo-apis/pablosu-jobbridge/jobboardapi/v1
 ```
 
-For example:
+Examples:
 
 ```text
-/choreo-apis/jobbridge/jobboardapi/v1/jobs
+/choreo-apis/pablosu-jobbridge/jobboardapi/v1/jobs
+/choreo-apis/pablosu-jobbridge/jobboardapi/v1/ai/match-jobs
 ```
 
-See [API Reference](docs/api-reference.md) for endpoint details.
+See [API Reference](docs/api-reference.md).
 
 ## Repository Structure
 
@@ -122,16 +160,21 @@ See [API Reference](docs/api-reference.md) for endpoint details.
 local-job-board/
 ├── README.md
 ├── docs/
+│   ├── ai-job-matching.md
+│   ├── api-reference.md
+│   ├── deployment-guide.md
+│   ├── solution-architecture.md
+│   └── testing-guide.md
 ├── job_board_api/
 ├── job-board-ui/
 └── Ballerina.toml
 ```
 
-The repository is a monorepo. The backend and frontend use separate component directories when imported into the platform.
+The repository is a monorepo. The backend and frontend are imported and deployed as separate WSO2 Developer Platform components.
 
 ## Backend Configuration
 
-The backend currently uses these Ballerina configurables:
+The backend uses runtime configurables for MySQL and AI Gateway connectivity:
 
 ```ballerina
 configurable string mysqlUser = ?;
@@ -139,15 +182,36 @@ configurable string mysqlHost = ?;
 configurable string mysqlPassword = ?;
 configurable string mysqlDatabase = ?;
 configurable int mysqlPort = ?;
+
+configurable string aiGatewayUrl = ?;
+configurable string aiGatewayApiKey = ?;
 ```
 
-In the deployed environment, these values are supplied through a Developer Platform / Devant configuration group. Database credentials are not stored in GitHub.
+In the deployed environment:
 
-A local `Config.toml` may still be used for local development, but the real credentials must not be committed.
+- MySQL values are supplied through platform runtime configuration/secrets.
+- `aiGatewayUrl` points to the production App LLM Proxy base URL.
+- `aiGatewayApiKey` is stored as a secret.
+- Real database or AI Gateway credentials are not stored in GitHub.
+
+Example local configuration:
+
+```toml
+mysqlUser = "root"
+mysqlHost = "localhost"
+mysqlPassword = "replace-with-local-password"
+mysqlDatabase = "jobbridge"
+mysqlPort = 3306
+
+aiGatewayUrl = "https://localhost:8443/jobbridge/jobbridge-ai-proxy"
+aiGatewayApiKey = "replace-with-local-proxy-key"
+```
+
+Do not commit a real `Config.toml`.
 
 ## Frontend Runtime Configuration
 
-The deployed React application uses a runtime configuration file:
+The deployed React application uses:
 
 ```text
 job-board-ui/public/config.js
@@ -157,111 +221,57 @@ Example:
 
 ```javascript
 window.configs = {
-  apiUrl: "/choreo-apis/jobbridge/jobboardapi/v1"
+  apiUrl: "/choreo-apis/pablosu-jobbridge/jobboardapi/v1"
 };
 ```
 
-The application resolves the API base URL with:
+The shared frontend configuration distinguishes local Vite development from deployment:
 
 ```javascript
-const API_BASE_URL =
-  window?.configs?.apiUrl ||
-  import.meta.env.VITE_API_BASE_URL ||
-  "/api";
+export const API_BASE_URL = import.meta.env.DEV
+  ? import.meta.env.VITE_API_BASE_URL || "/api"
+  : window?.configs?.apiUrl ||
+    import.meta.env.VITE_API_BASE_URL ||
+    "/api";
 ```
 
-This preserves local development while allowing the deployed application to use the Developer Platform project connection.
+This means:
+
+```text
+Local Vite:
+  /api -> Vite proxy -> http://127.0.0.1:9090
+
+Deployed:
+  window.configs.apiUrl -> /choreo-apis/... -> deployed backend
+```
 
 ## Asgardeo Configuration
 
-The React application uses Asgardeo OIDC.
+The React application uses the Asgardeo SPA SDK with Authorization Code + PKCE.
 
-The deployed callback is derived dynamically:
+The redirect URL is derived at runtime:
 
 ```javascript
 const appUrl = window.location.origin;
 ```
 
-and used for both:
+Asgardeo must contain exact matching redirect URLs for local and deployed environments. A trailing `/` mismatch can cause a callback error.
 
-```javascript
-signInRedirectURL: appUrl,
-signOutRedirectURL: appUrl,
-```
-
-Asgardeo must contain exact matching redirect URLs for local and deployed environments. A trailing slash difference can cause a callback mismatch.
-
-The JobBridge logo is hosted by the web application and referenced from Asgardeo using its public PNG URL.
+The JobBridge logo is hosted by the web application and referenced by Asgardeo using its public PNG URL.
 
 ## Local Run
 
-### Local MySQL Database
+### MySQL
 
-Before running the backend locally, start a local MySQL instance and create the `jobbridge` database.
+Start MySQL and create the `jobbridge` database and the `jobs` and `organizations` tables.
 
-Example:
+### AI Gateway
 
-```sql
-CREATE DATABASE IF NOT EXISTS jobbridge
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
+For local AI matching, run the local WSO2 AI Gateway and deploy the development App LLM Proxy:
 
-USE jobbridge;
+```text
+https://localhost:8443/jobbridge/jobbridge-ai-proxy
 ```
-
-Create the required tables:
-
-```sql
-CREATE TABLE organizations (
-    id VARCHAR(36) PRIMARY KEY,
-    owner_user_id VARCHAR(255) NOT NULL,
-    name VARCHAR(150) NOT NULL,
-    website VARCHAR(255),
-    contact_name VARCHAR(150) NOT NULL,
-    contact_email VARCHAR(255) NOT NULL,
-    description TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    reviewed_by VARCHAR(255),
-    reviewed_at TIMESTAMP NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    UNIQUE KEY uk_organizations_owner_user_id (owner_user_id)
-);
-
-CREATE TABLE jobs (
-    id VARCHAR(36) PRIMARY KEY,
-    title VARCHAR(150) NOT NULL,
-    organization VARCHAR(150) NOT NULL,
-    location VARCHAR(150) NOT NULL,
-    employment_type VARCHAR(50) NOT NULL,
-    description TEXT NOT NULL,
-    apply_url VARCHAR(500) NOT NULL,
-    salary_min DECIMAL(12,2) NULL,
-    salary_max DECIMAL(12,2) NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-Verify:
-
-```sql
-SHOW TABLES;
-DESCRIBE organizations;
-DESCRIBE jobs;
-```
-
-For local development, create `job_board_api/Config.toml` with values matching your local MySQL instance:
-
-```toml
-mysqlUser = "root"
-mysqlHost = "localhost"
-mysqlPassword = "replace-with-local-password"
-mysqlDatabase = "jobbridge"
-mysqlPort = 3306
-```
-
-Do not commit the real `Config.toml` to GitHub.
 
 ### Backend
 
@@ -287,22 +297,37 @@ Typical local frontend URL:
 http://localhost:5173
 ```
 
+## API Platform / Bijira Lab Status
+
+A separate `JobBridge Public API` proxy was created in WSO2 API Platform and tested with:
+
+- Built-in API Platform STS
+- OAuth2 protection
+- Public GET resources and protected write resources
+- Rate limiting
+- Response-header policy
+- Gateway deployment
+- Developer Portal publication and subscription
+
+An external Asgardeo key manager was explored, but the deployed JobBridge web application currently continues to use the Developer Platform project connection rather than routing through this API Platform proxy.
+
 ## Current Limitations
 
-- API OAuth 2 enforcement is currently disabled.
+- API OAuth2 enforcement is disabled on the deployed Developer Platform backend path.
 - Backend authorization is not yet the final authority for all role-sensitive operations.
-- `GET /api/organizations/me` currently accepts `ownerUserId` from the browser.
+- `GET /api/organizations/me` accepts `ownerUserId` from the browser.
 - Organization approval does not automatically assign the Asgardeo `MEMBER_ORGANIZATION` role.
 - Jobs currently store an organization name rather than an `organization_id` foreign key.
 - API error responses should be standardized.
-- Bijira API management is not yet configured.
+- AI output is LLM-generated and should be treated as advisory matching rather than a deterministic hiring decision.
+- The cloud AI Gateway VM must be running for deployed AI matching to work.
 
 ## Next Steps
 
-1. Add Bijira as the governed API-management layer.
-2. Enable API authentication and authorization when the API security model is finalized.
-3. Validate Asgardeo-issued tokens at the API layer.
-4. Enforce roles and ownership in the backend.
-5. Add an `organization_id` relationship to jobs.
-6. Automate Asgardeo role assignment after organization approval.
-7. Add production-grade backups, monitoring, alerting, and auditing.
+1. Add AI Gateway guardrails/policies and demonstrate AI observability.
+2. Update the solution and deployment architecture diagrams with AI Workspace, the GCP AI Gateway, and OpenAI.
+3. Decide whether to move the deployed browser-to-backend path behind the WSO2 API Platform proxy.
+4. Complete server-side authentication, roles, ownership checks, and scopes.
+5. Automate Asgardeo role assignment after organization approval.
+6. Add production-grade backup, monitoring, alerting, auditing, and AI Gateway certificate/VM operational monitoring.
+

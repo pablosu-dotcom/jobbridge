@@ -7,13 +7,16 @@ Current platform layout:
 | Concern | Platform |
 |---|---|
 | Frontend | WSO2 Developer Platform Web Application |
-| Integration runtime | WSO2 Developer Platform / Devant Integration |
-| Database | Devant-managed MySQL |
+| Integration runtime | WSO2 Developer Platform / WSO2 Integrator |
+| Database | Managed MySQL |
 | Identity | Asgardeo |
-| API management | Bijira — planned |
+| AI control plane | WSO2 AI Workspace |
+| AI runtime gateway | WSO2 AI Gateway 1.2 on Google Compute Engine |
+| LLM provider | OpenAI through WSO2 LLM Provider |
+| API management lab | WSO2 API Platform / Bijira |
 | Source control | GitHub |
 
-The frontend and backend are in the same JobBridge project but are deployed as separate components from a shared monorepo.
+The frontend and backend are separate Developer Platform components created from the same monorepo.
 
 ## 2. Repository Layout
 
@@ -32,11 +35,11 @@ Backend:  /job_board_api
 Frontend: /job-board-ui
 ```
 
-Using the correct component directory is important. The Ballerina buildpack must run with `job_board_api` as its build context so that `target/bin/job_board_api.jar` is discovered correctly.
+Using the correct component directory is important for buildpack behavior.
 
 ## 3. GitHub Preparation
 
-Recommended `.gitignore` entries:
+Recommended `.gitignore` entries include:
 
 ```gitignore
 .DS_Store
@@ -62,11 +65,11 @@ target/
 .vscode/
 ```
 
-Do not commit real database credentials or local secrets.
+Do not commit database credentials, AI Gateway API keys, OpenAI credentials, or local secrets.
 
 ## 4. Backend Configurables
 
-Current `config.bal` values:
+Current runtime values include:
 
 ```ballerina
 configurable string mysqlUser = ?;
@@ -74,17 +77,30 @@ configurable string mysqlHost = ?;
 configurable string mysqlPassword = ?;
 configurable string mysqlDatabase = ?;
 configurable int mysqlPort = ?;
+
+configurable string aiGatewayUrl = ?;
+configurable string aiGatewayApiKey = ?;
 ```
 
-The MySQL client uses the configurable port rather than hard-coding `3306`, because the managed database may expose a different port.
+Production values:
+
+```text
+mysql*            -> managed MySQL runtime configuration/secrets
+aiGatewayUrl      -> production App LLM Proxy base URL
+aiGatewayApiKey   -> secret
+```
+
+Example production AI URL:
+
+```text
+https://<ai-gateway-public-host-or-ip>/jobbridge/jobbridge-ai-prod
+```
+
+The code appends `/chat/completions`, so `aiGatewayUrl` must be the proxy base URL rather than the full chat-completions path.
 
 ## 5. Managed MySQL
 
-### Provisioning
-
-Use the Platform Engineer profile and create a managed MySQL database.
-
-The deployed JobBridge database contains:
+The deployed database contains:
 
 ```text
 jobbridge
@@ -92,56 +108,183 @@ jobbridge
 └── organizations
 ```
 
-The database schema must match the fields used by the Ballerina SQL queries. During deployment, an initial query failure identified a missing `salary_min` column; the managed schema was updated to match the application model.
+The database schema must match the Ballerina SQL row types and queries.
 
-### Runtime configuration
+Runtime credentials are supplied by the platform rather than stored in GitHub.
 
-The working deployment uses a **configuration group** rather than hard-coded credentials or a committed `Config.toml`.
+## 6. AI Workspace Configuration
 
-The configuration group supplies:
+### LLM Provider
 
-```text
-mysqlUser
-mysqlHost
-mysqlPassword
-mysqlDatabase
-mysqlPort
-```
+An OpenAI LLM Provider is configured in an AI Workspace organization controlled by the project owner.
 
-This allows the backend to receive the managed database values without storing secrets in GitHub.
+The upstream OpenAI API key is stored in the LLM Provider and is never exposed to JobBridge.
 
-## 6. Backend Deployment
+### App LLM Proxies
 
-1. Create/import the backend integration from the GitHub repository.
-2. Set the component directory to:
+Recommended separation:
 
 ```text
-/job_board_api
+Development:
+  jobbridge-ai-proxy
+  -> local AI Gateway
+
+Production:
+  jobbridge-ai-prod
+  -> jobbridge-cloud-gateway
 ```
 
+The backend uses an App LLM Proxy API key through:
+
+```http
+X-API-Key: <proxy-key>
+```
+
+Generate the key after the proxy is deployed to the intended gateway.
+
+## 7. Production AI Gateway on Google Cloud
+
+### VM
+
+The production runtime uses a dedicated Google Compute Engine VM.
+
+Recommended baseline:
+
+```text
+Machine type: e2-standard-2
+OS: Ubuntu LTS
+Static external IPv4
+Docker Engine + Docker Compose
+```
+
+### Gateway registration
+
+In AI Workspace:
+
+```text
+Name: jobbridge-cloud-gateway
+Environment: Production
+URL: https://<static-public-ip-or-hostname>
+```
+
+Use the gateway-specific registration instructions/token from AI Workspace.
+
+The working runtime is WSO2 AI Gateway **1.2.x**.
+
+### Runtime ports
+
+Keep gateway internal/admin ports private. Public traffic should enter through standard HTTPS.
+
+```text
+Internet :443
+    |
+    v
+Nginx
+    |
+    | http://127.0.0.1:8080
+    v
+WSO2 AI Gateway
+```
+
+### TLS
+
+Nginx terminates TLS with a publicly trusted certificate.
+
+If using a public IP directly, the current implementation uses a Let's Encrypt IP-address certificate. These certificates are short-lived, so automatic renewal must remain enabled and Nginx should reload when renewed.
+
+Do not disable TLS verification in the deployed Ballerina client.
+
+### Health
+
+On the VM:
+
+```bash
+docker compose ps
+curl http://localhost:9094/api/admin/v1/health
+```
+
+The AI Workspace gateway status should show `Active`.
+
+### Direct gateway test
+
+Before Nginx:
+
+```bash
+curl -k -X POST   "https://localhost:8443/jobbridge/jobbridge-ai-prod/chat/completions"   -H "Content-Type: application/json"   -H "X-API-Key: <proxy-key>"   -d '{
+    "model": "gpt-4o-mini",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Return exactly: direct cloud gateway test"
+      }
+    ]
+  }'
+```
+
+### Public gateway test
+
+Then test public HTTPS without `-k`:
+
+```bash
+curl -X POST   "https://<public-host-or-ip>/jobbridge/jobbridge-ai-prod/chat/completions"   -H "Content-Type: application/json"   -H "X-API-Key: <proxy-key>"   -d '{
+    "model": "gpt-4o-mini",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Return exactly: JobBridge cloud AI Gateway is working"
+      }
+    ]
+  }'
+```
+
+## 8. Backend Deployment
+
+1. Import/create the backend component from GitHub.
+2. Set component directory:
+   ```text
+   /job_board_api
+   ```
 3. Use the Ballerina / WSO2 Integrator build preset.
-4. Confirm the build produces:
+4. Supply MySQL runtime values.
+5. Supply:
+   ```text
+   aiGatewayUrl
+   aiGatewayApiKey
+   ```
+6. Keep `aiGatewayApiKey` as a secret.
+7. Do not mount an additional certificate when the AI Gateway presents a publicly trusted certificate.
+8. Deploy the backend.
+9. Verify:
+   ```http
+   GET /api/jobs
+   POST /api/ai/match-jobs
+   ```
 
-```text
-target/bin/job_board_api.jar
+Example AI test:
+
+```json
+{
+  "profile": "I have five years of customer service experience and want part-time work in Coral Gables."
+}
 ```
 
-5. Link the MySQL configuration group.
-6. Deploy to the Development environment.
-7. Use Application Logs and Gateway Logs for troubleshooting.
-8. Verify the API with GET and POST operations.
+Expected shape:
 
-A previous startup failure:
-
-```text
-determine start command: when there is no default process a command is required
+```json
+{
+  "matches": [
+    {
+      "jobId": "...",
+      "score": 80,
+      "reason": "..."
+    }
+  ]
+}
 ```
 
-was caused by using the repository root as the build context. Setting the component directory to `/job_board_api` fixed the issue.
+## 9. Frontend Web Application
 
-## 7. Frontend Web Application
-
-Create a Web Application component from:
+Create the Web Application component from:
 
 ```text
 /job-board-ui
@@ -152,22 +295,14 @@ Use:
 ```text
 Build command: npm ci && npm run build
 Build path:    dist
-Node version:  22
+Node version:  20
 ```
 
-A successful Vite build produces the static application under `dist/`.
+WSO2 Developer Platform **Managed Authentication is disabled** because JobBridge already authenticates directly with Asgardeo.
 
-## 8. UI-to-API Connection
+## 10. UI-to-API Connection
 
-The web application and backend integration are connected inside the same JobBridge project.
-
-The frontend uses the platform-generated route:
-
-```text
-/choreo-apis/jobbridge/jobboardapi/v1
-```
-
-The runtime configuration is stored in:
+Runtime file:
 
 ```text
 job-board-ui/public/config.js
@@ -177,135 +312,89 @@ Example:
 
 ```javascript
 window.configs = {
-  apiUrl: "/choreo-apis/jobbridge/jobboardapi/v1"
+  apiUrl: "/choreo-apis/pablosu-jobbridge/jobboardapi/v1"
 };
 ```
 
-The frontend resolves the API base URL with:
+Shared API base resolution:
 
 ```javascript
-const API_BASE_URL =
-  window?.configs?.apiUrl ||
-  import.meta.env.VITE_API_BASE_URL ||
-  "/api";
+export const API_BASE_URL = import.meta.env.DEV
+  ? import.meta.env.VITE_API_BASE_URL || "/api"
+  : window?.configs?.apiUrl ||
+    import.meta.env.VITE_API_BASE_URL ||
+    "/api";
 ```
 
-API calls use:
-
-```javascript
-fetch(`${API_BASE_URL}/jobs`);
-```
-
-instead of directly calling `/api/jobs`.
-
-For Vite, `public/config.js` is served as:
+Behavior:
 
 ```text
-/config.js
+Local:
+  /api -> Vite proxy -> http://127.0.0.1:9090
+
+Deployed:
+  /choreo-apis/pablosu-jobbridge/jobboardapi/v1
 ```
 
-and `index.html` loads it before the React entry script:
+This prevents `public/config.js` from forcing a deployed `/choreo-apis/...` path during local Vite development.
 
-```html
-<script src="/config.js"></script>
-<script type="module" src="/src/main.jsx"></script>
-```
+## 11. Asgardeo OIDC
 
-## 9. Asgardeo OIDC
-
-The existing Asgardeo SPA integration remains in place.
-
-The redirect URL is determined at runtime:
+The SPA continues to use Asgardeo directly.
 
 ```javascript
 const appUrl = window.location.origin;
 ```
 
-Configuration:
+Use the runtime origin for both sign-in and sign-out redirects.
 
-```javascript
-const authConfig = {
-  clientID: "<asgardeo-client-id>",
-  baseUrl: "https://api.asgardeo.io/t/<tenant>",
-  signInRedirectURL: appUrl,
-  signOutRedirectURL: appUrl,
-  scope: ["openid", "profile", "roles"],
-};
-```
+Register both local and deployed origins in Asgardeo. Redirect URLs must match exactly, including trailing slash behavior.
 
-Register both the local and deployed origins in Asgardeo.
+## 12. Current API Security
 
-Example:
+The active deployed React-to-backend path uses the Developer Platform project connection.
 
-```text
-http://localhost:5173
-https://<jobbridge-web-host>
-```
+For the MVP:
 
-Redirect URLs must match exactly. A trailing `/` mismatch can cause:
+- Asgardeo authenticates the user to React.
+- Developer Platform Managed Authentication is disabled.
+- Backend OAuth2 enforcement is disabled.
+- Server-side role/ownership enforcement remains a hardening item.
 
-```text
-Application callback URL does not match the registered redirect URL
-```
+Separately, a WSO2 API Platform proxy has been tested successfully using the built-in STS for OAuth2 security. It is not currently the route used by the deployed UI.
 
-The JobBridge logo can be served from:
-
-```text
-https://<jobbridge-web-host>/jobbridge-logo.png
-```
-
-and used as the Asgardeo branding logo URL.
-
-## 10. Current API Security
-
-For the MVP, OAuth 2 enforcement on the JobBridge API is disabled in the Integration Platform security configuration.
-
-This means:
-
-```text
-Asgardeo
-   |
-   | OIDC login for the React application
-   v
-React UI
-   |
-   | Project connection
-   v
-JobBridge API
-```
-
-Asgardeo currently authenticates the user to the application, but the backend API is not yet enforcing Asgardeo access tokens.
-
-A `401` with WSO2 code `900901` and `WWW-Authenticate: invalid_token` was resolved by disabling OAuth 2 enforcement on the API for this MVP phase.
-
-## 11. Observability
+## 13. Observability
 
 Use:
 
-- **Gateway Logs** to confirm routing, request path, response code, and gateway behavior.
-- **Application Logs** to see Ballerina runtime and SQL errors.
-- Build logs to diagnose component-directory and buildpack issues.
+- Developer Platform application logs for Ballerina runtime, SQL, and AI call errors
+- Developer Platform gateway logs for component routing
+- AI Workspace insights for AI traffic where available
+- AI Gateway container logs on the GCP VM
+- Nginx logs for public gateway ingress
+- Google Cloud VM monitoring for runtime availability
 
-Example application-level database errors are more useful than gateway `500` responses because they expose the underlying SQL exception.
+Useful gateway commands:
 
-## 12. Bijira API Management — Planned
+```bash
+docker compose ps
+docker compose logs --tail=200
+```
 
-After the MVP is stable:
+## 14. Deployment Sequence
 
-1. Create the JobBridge API in Bijira.
-2. Use the integration service as the backend.
-3. Import or maintain an OpenAPI contract.
-4. Enable OAuth security.
-5. Add scopes such as:
-   - `jobs:read`
-   - `jobs:write`
-   - `organizations:register`
-   - `admin:review`
-6. Apply throttling and policies.
-7. Add analytics and governance.
-8. Update the frontend connection to the governed gateway path as appropriate.
+Recommended order:
 
-## 13. Production Readiness Checklist
+```text
+1. AI Gateway VM healthy + Active in AI Workspace
+2. OpenAI provider deployed to production gateway
+3. jobbridge-ai-prod deployed and API key tested
+4. job_board_api deployed and /ai/match-jobs tested
+5. job-board-ui deployed
+6. Full browser smoke test
+```
+
+## 15. Production Readiness Checklist
 
 - [x] Frontend deployed
 - [x] Backend integration deployed
@@ -314,14 +403,21 @@ After the MVP is stable:
 - [x] Asgardeo OIDC login working
 - [x] JobBridge logo configured in Asgardeo
 - [x] UI-to-API project connection working
-- [ ] Access tokens validated by API layer
-- [ ] Roles enforced by backend
+- [x] AI Job Matcher implemented
+- [x] WSO2 AI Gateway deployed to GCP
+- [x] AI App LLM Proxy working through public HTTPS
+- [x] AI Gateway API key kept server-side
+- [x] Deployed `/api/ai/match-jobs` tested successfully
+- [ ] AI Gateway guardrails/policies configured
+- [ ] AI observability demo finalized
+- [ ] Access tokens validated by application API layer
+- [ ] Roles enforced server-side
 - [ ] User identity derived from validated token
 - [ ] Admin endpoints protected server-side
 - [ ] Organization ownership enforced server-side
-- [ ] CORS/security policy finalized for production
 - [ ] Production backups configured
-- [ ] Logs and alerts operationalized
+- [ ] Logs/alerts operationalized
 - [ ] OpenAPI contract governed
 - [ ] Audit records captured
-- [ ] Bijira API management enabled
+- [ ] Decide whether deployed UI should route through API Platform
+

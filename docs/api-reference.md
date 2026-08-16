@@ -8,10 +8,10 @@ Local base URL:
 http://localhost:9090/api
 ```
 
-Planned managed API base URL:
+Current deployed web-app route:
 
 ```text
-https://<bijira-gateway>/jobbridge/1.0
+/choreo-apis/pablosu-jobbridge/jobboardapi/v1
 ```
 
 Content type:
@@ -20,11 +20,7 @@ Content type:
 application/json
 ```
 
-Authenticated calls send:
-
-```http
-Authorization: Bearer <access-token>
-```
+The active deployed MVP backend path does not currently enforce end-user OAuth2. A separate API Platform proxy has been tested with OAuth2 using the built-in STS but is not the route currently used by the deployed web app.
 
 ## 2. Public Job APIs
 
@@ -37,19 +33,19 @@ Returns active job postings.
 ```json
 [
   {
-    "id": "690d8be7-4ac8-4627-940c-9427aa9f5d1d",
-    "title": "QA Tester",
-    "organization": "Pabloco",
-    "location": "Miami, FL",
-    "employmentType": "part-time",
-    "description": "Test applications",
-    "applyUrl": "https://www.pabloco.com",
+    "id": "job-002",
+    "title": "Administrative Assistant",
+    "organization": "Example Organization",
+    "location": "Coral Gables, FL",
+    "employmentType": "Part-time",
+    "description": "Support office operations and communication.",
+    "applyUrl": "https://example.com/jobs/admin-assistant",
     "status": "ACTIVE"
   }
 ]
 ```
 
-Only jobs with `status = ACTIVE` should be returned.
+Only jobs with `status = ACTIVE` are returned.
 
 ---
 
@@ -68,28 +64,79 @@ Creates a pending job posting.
   "title": "QA Tester",
   "organization": "Pabloco",
   "location": "Miami, FL",
-  "employmentType": "part-time",
+  "employmentType": "Part-time",
   "description": "Test applications",
-  "applyUrl": "https://www.pabloco.com"
+  "applyUrl": "https://www.example.com/jobs/qa",
+  "salaryMin": 18,
+  "salaryMax": 22
 }
 ```
 
 #### Backend behavior
 
-- Generate a UUID
-- Set `status = PENDING`
-- Persist the job
-- Return confirmation
+- Generates a UUID
+- Sets `status = PENDING`
+- Persists the job
+- Returns confirmation
 
-#### Example response
+## 3. AI Job Matching API
+
+### POST `/ai/match-jobs`
+
+Ranks currently active JobBridge jobs against a short candidate profile.
+
+#### Request
 
 ```json
 {
-  "message": "Job submitted for administrator review."
+  "profile": "I have five years of customer service experience, enjoy helping people, and want part-time work in Coral Gables."
 }
 ```
 
-## 3. Organization APIs
+#### Processing
+
+The backend:
+
+1. Calls `getActiveJobs()`.
+2. Builds a prompt using the candidate profile and active jobs.
+3. Calls the production WSO2 AI Gateway App LLM Proxy.
+4. Uses `gpt-4o-mini`.
+5. Parses the model's JSON-only response into typed JobBridge records.
+6. Returns at most five matches with score `>= 60`.
+
+#### Response: `200` or `201`
+
+```json
+{
+  "matches": [
+    {
+      "jobId": "job-002",
+      "score": 80,
+      "reason": "The part-time Administrative Assistant role aligns well with the candidate's customer service experience and interest in helping people."
+    },
+    {
+      "jobId": "68683c00-d5de-4ac7-ba30-f84d831a1365",
+      "score": 60,
+      "reason": "The part-time QA Tester role is a weaker but still relevant match based on transferable communication and problem-solving skills."
+    }
+  ]
+}
+```
+
+The AI endpoint returns match metadata rather than duplicating the complete job object. The React application joins each `jobId` to the jobs already loaded in the browser.
+
+#### AI Gateway dependency
+
+The deployed backend uses:
+
+```text
+aiGatewayUrl    = https://<public-host-or-ip>/jobbridge/jobbridge-ai-prod
+aiGatewayApiKey = <server-side secret>
+```
+
+The API key is never returned to or stored in the browser.
+
+## 4. Organization APIs
 
 ### POST `/organizations`
 
@@ -101,9 +148,9 @@ Submits a new organization application.
 {
   "ownerUserId": "asgardeo-sub",
   "name": "Pabloco",
-  "website": "https://www.pabloco.com",
-  "contactName": "Pablo Suarez",
-  "contactEmail": "admin@pabloco.com",
+  "website": "https://www.example.com",
+  "contactName": "Example Contact",
+  "contactEmail": "admin@example.com",
   "description": "Technology and professional services organization."
 }
 ```
@@ -116,7 +163,7 @@ Submits a new organization application.
 
 #### Target behavior
 
-The backend should ignore any browser-supplied owner ID and derive it from the validated access token `sub` claim.
+The backend should derive identity from a validated token instead of trusting a browser-supplied owner ID.
 
 ---
 
@@ -131,183 +178,85 @@ Returns the current user's organization application.
   "id": "c1c54ad9-2f38-43d8-9169-9c488e6e22d5",
   "ownerUserId": "asgardeo-sub",
   "name": "Pabloco",
-  "website": "https://www.pabloco.com",
-  "contactName": "Pablo Suarez",
-  "contactEmail": "admin@pabloco.com",
+  "website": "https://www.example.com",
+  "contactName": "Example Contact",
+  "contactEmail": "admin@example.com",
   "description": "Technology and professional services organization.",
   "status": "PENDING"
 }
 ```
 
-#### Desired no-application response
-
-```http
-404 Not Found
-```
-
-```json
-{
-  "message": "Organization application not found."
-}
-```
-
-#### Current limitation
-
-The no-row path may still return `500` until the resource flow is updated to treat no rows as a normal business result.
-
-## 4. Administrator Job APIs
+## 5. Administrator Job APIs
 
 ### GET `/admin/jobs/pending`
 
 Returns pending job postings.
 
-#### Intended authorization
+Intended authorization:
 
-`ADMIN`
-
-#### Response
-
-```json
-[
-  {
-    "id": "690d8be7-4ac8-4627-940c-9427aa9f5d1d",
-    "title": "QA Tester",
-    "organization": "Pabloco",
-    "location": "Miami, FL",
-    "employmentType": "part-time",
-    "description": "Test applications",
-    "applyUrl": "https://www.pabloco.com",
-    "status": "PENDING"
-  }
-]
+```text
+ADMIN
 ```
-
----
 
 ### PUT `/admin/jobs/{id}/approve`
 
-Approves a pending job.
-
-#### SQL behavior
-
-```sql
-UPDATE jobs
-SET status = 'ACTIVE'
-WHERE id = ?
-  AND status = 'PENDING';
-```
-
-#### Success response
-
-```json
-{
-  "message": "Job approved successfully."
-}
-```
-
----
+Approves a pending job and makes it eligible for public search and AI matching.
 
 ### PUT `/admin/jobs/{id}/reject`
 
 Rejects a pending job.
 
-#### SQL behavior
-
-```sql
-UPDATE jobs
-SET status = 'REJECTED'
-WHERE id = ?
-  AND status = 'PENDING';
-```
-
-#### Success response
-
-```json
-{
-  "message": "Job rejected successfully."
-}
-```
-
-## 5. Administrator Organization APIs
+## 6. Administrator Organization APIs
 
 ### GET `/admin/organizations/pending`
 
 Returns pending organization applications.
 
-#### Intended authorization
+Intended authorization:
 
-`ADMIN`
-
-#### Response
-
-```json
-[
-  {
-    "id": "c1c54ad9-2f38-43d8-9169-9c488e6e22d5",
-    "ownerUserId": "asgardeo-sub",
-    "name": "Pabloco",
-    "website": "https://www.pabloco.com",
-    "contactName": "Pablo Suarez",
-    "contactEmail": "admin@pabloco.com",
-    "description": "Technology and professional services organization.",
-    "status": "PENDING"
-  }
-]
+```text
+ADMIN
 ```
-
----
 
 ### PUT `/admin/organizations/{id}/approve`
 
 Approves a pending organization.
 
-#### SQL behavior
-
-```sql
-UPDATE organizations
-SET status = 'ACTIVE',
-    reviewed_at = CURRENT_TIMESTAMP
-WHERE id = ?
-  AND status = 'PENDING';
-```
-
-#### Success response
-
-```json
-{
-  "message": "Organization approved successfully."
-}
-```
-
-#### Current operational follow-up
-
-Assign the Asgardeo `MEMBER_ORGANIZATION` role manually, then have the user sign out and sign in again.
-
----
+Operational follow-up currently includes assigning the Asgardeo `MEMBER_ORGANIZATION` role manually and having the user sign in again.
 
 ### PUT `/admin/organizations/{id}/reject`
 
 Rejects a pending organization.
 
-#### SQL behavior
+## 7. AI Gateway API
 
-```sql
-UPDATE organizations
-SET status = 'REJECTED',
-    reviewed_at = CURRENT_TIMESTAMP
-WHERE id = ?
-  AND status = 'PENDING';
+JobBridge does not expose the App LLM Proxy directly to the browser.
+
+The backend calls an OpenAI-compatible endpoint:
+
+```http
+POST <aiGatewayUrl>/chat/completions
+X-API-Key: <aiGatewayApiKey>
+Content-Type: application/json
 ```
 
-#### Success response
+Request shape:
 
 ```json
 {
-  "message": "Organization rejected successfully."
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "<JobBridge matching prompt>"
+    }
+  ]
 }
 ```
 
-## 6. Recommended HTTP Status Standards
+The WSO2 AI Gateway routes the request to the configured OpenAI LLM Provider.
+
+## 8. Recommended HTTP Status Standards
 
 | Situation | Status |
 |---|---:|
@@ -319,14 +268,17 @@ WHERE id = ?
 | Authenticated but unauthorized | `403` |
 | Resource not found | `404` |
 | Conflict or duplicate application | `409` |
+| Upstream AI unavailable | `502` or `503` |
 | Unexpected database or service error | `500` |
 
-## 7. Planned API Improvements
+## 9. Planned API Improvements
 
-- Replace query-string user ID with token-derived identity.
-- Add an OpenAPI definition.
-- Apply API scopes in Bijira.
+- Derive identity from validated tokens.
+- Add/maintain a formal OpenAPI definition.
+- Decide whether the deployed application will route through WSO2 API Platform.
+- Apply scopes and policies if API Platform becomes the active consumer-facing route.
 - Standardize error bodies.
-- Add pagination and filtering to jobs.
+- Add pagination/filtering to jobs.
 - Add organization ownership validation.
-- Add review reasons and audit fields.
+- Add AI-specific error handling, timeout behavior, and fallback messaging.
+

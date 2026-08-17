@@ -248,7 +248,7 @@ AND status = 'PENDING'`);
         }
     }
 
-    resource function post ai/match\-jobs(@http:Payload AiMatchjobsPayload payload) returns json|error {
+    resource function post ai/match\-jobs(@http:Payload AiMatchjobsPayload payload) returns json|http:Response|error {
         do {
             if payload.profile.trim().length() == 0 {
                 return error("Candidate profile must not be empty");
@@ -289,21 +289,46 @@ Return exactly this JSON structure:
   ]
 }`;
 
-            AiChatResponse
-aiResponse = check jobbridgeAiClient->/chat/completions.post(<json>{
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": systemPrompt
-                    },
-                    {
-                        "role": "user",
-                        "content": jobsText
-                    }
-                ]
-            }, headers = {"X-API-Key": aiGatewayApiKey}, mediaType = "application/json", targetType = AiChatResponse);
-            string matchesText = aiResponse.choices[0].message.content;
+            http:Response gatewayResponse = check jobbridgeAiClient->/chat/completions.post(
+    <json>{
+        "model": "gpt-4o-mini",
+        "messages": [
+            {
+                "role": "system",
+                "content": systemPrompt
+            },
+            {
+                "role": "user",
+                "content": payload.profile
+            }
+        ]
+    },
+    headers = {"X-API-Key": aiGatewayApiKey},
+    mediaType = "application/json",
+    targetType = http:Response
+);
+
+// Semantic Prompt Guard intervention
+if gatewayResponse.statusCode == 422 {
+    http:Response blockedResponse = new;
+    blockedResponse.statusCode = 422;
+    blockedResponse.setPayload({
+        message: "This request is outside the scope of JobBridge. Please describe your skills, experience, location, or job preferences."
+    });
+    return blockedResponse;
+}
+
+// Handle other AI Gateway failures
+if gatewayResponse.statusCode < 200 || gatewayResponse.statusCode >= 300 {
+    string errorBody = check gatewayResponse.getTextPayload();
+    return error(string `AI Gateway returned HTTP ${gatewayResponse.statusCode}: ${errorBody}`);
+}
+
+// Convert successful JSON response to your existing type
+json aiJson = check gatewayResponse.getJsonPayload();
+AiChatResponse aiResponse = check aiJson.cloneWithType();
+
+string matchesText = aiResponse.choices[0].message.content;
 
             MatchJobsResponse result =
             check matchesText.fromJsonStringWithType();

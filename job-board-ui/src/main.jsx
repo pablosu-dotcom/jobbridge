@@ -11,7 +11,14 @@ const authConfig = {
   baseUrl: "https://api.asgardeo.io/t/pabloco",
   signInRedirectURL: appUrl,
   signOutRedirectURL: appUrl,
-  scope: ["openid", "profile", "roles"],
+  scope: [
+    "openid",
+    "profile",
+    "roles",
+    "jobs:write",
+    "organization:manage",
+    "admin",
+  ],
 };
 
 ReactDOM.createRoot(document.getElementById("root")).render(

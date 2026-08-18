@@ -216,10 +216,17 @@ const canRegisterOrganization =
     setLoadingOrganization(true);
     setError("");
 
+    const accessToken = await getAccessToken();
+
     const response = await fetch(
       `${API_BASE_URL}/organizations/me?ownerUserId=${encodeURIComponent(
         ownerUserId
-      )}`
+      )}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
     );
 
     if (response.status === 404) {
@@ -659,10 +666,13 @@ async function submitOrganization(event) {
       setMessage("");
       setError("");
 
+      const accessToken = await getAccessToken();
+
       const response = await fetch(`${API_BASE_URL}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           title: form.title.trim(),

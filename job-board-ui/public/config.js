@@ -1,3 +1,4 @@
 window.configs = {
-  apiUrl: '/choreo-apis/pablosu-jobbridge/jobboardapi/v1'
+  apiUrl: "https://35.231.59.214/jobbridge/1.0",
+  aiApiUrl: "/choreo-apis/pablosu-jobbridge/jobboardapi/v1",
 };

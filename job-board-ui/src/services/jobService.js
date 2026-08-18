@@ -1,4 +1,4 @@
-import { AI_API_BASE_URL, API_BASE_URL } from "../config";
+import { API_BASE_URL } from "../config";
 
 export async function getJobs() {
   const response = await fetch(`${API_BASE_URL}/jobs`, {
@@ -34,7 +34,7 @@ export async function getJobs() {
 }
 
 export async function matchJobs(profile) {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/match-jobs`, {
+  const response = await fetch(`${API_BASE_URL}/ai/match-jobs`, {
     method: "POST",
     headers: {
       Accept: "application/json",

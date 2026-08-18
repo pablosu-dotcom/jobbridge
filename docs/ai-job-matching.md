@@ -2,9 +2,9 @@
 
 ## 1. Objective
 
-The AI Job Matcher adds a useful AI capability to JobBridge without exposing LLM credentials to the browser.
+The AI Job Matcher adds AI-assisted job discovery without exposing LLM credentials to the browser. A job seeker enters a short profile describing experience, skills, location, and preferred work. JobBridge ranks currently active jobs and returns concise explanations.
 
-A job seeker enters a short profile describing experience, skills, location, and preferred work. JobBridge ranks currently active jobs and returns concise explanations.
+The matcher is advisory: it helps users explore available jobs; it is not an automated hiring or eligibility decision.
 
 ## 2. User Experience
 
@@ -18,45 +18,66 @@ Tell us about yourself
      Example Organization
      Coral Gables, FL
      Strong match because...
-
-60%  QA Tester
-     ...
 ```
 
-The normal job list remains available below the AI recommendations.
+The normal job list remains available independently of AI recommendations.
 
 ## 3. Application Flow
 
 ```text
 React
   |
-  | POST /api/ai/match-jobs
+  | POST /ai/match-jobs
+  | public resource
+  v
+WSO2 API Manager 4.7
+  |
+  | public ingress + analytics
   v
 WSO2 Integrator / Ballerina
   |
-  +--> getActiveJobs()
-  |      |
-  |      v
-  |    MySQL
+  +--> getActiveJobs() --> Managed MySQL
   |
-  +--> Build prompt
+  +--> Build trusted system message
+  |      - JobBridge matching instructions
+  |      - ACTIVE jobs JSON
+  |      - JSON response contract
   |
-  v
-WSO2 AI Gateway
-App LLM Proxy: jobbridge-ai-prod
+  +--> Add candidate profile as final user message
   |
   v
-OpenAI
-gpt-4o-mini
+WSO2 AI Gateway 1.2 / jobbridge-ai-prod
+  |
+  +--> PII masking/redaction
+  +--> Semantic Prompt Guard (deny-list)
+  +--> Token Based Rate Limit
+  |      2,000 total tokens / 60 seconds (demo setting)
+  |
+  v
+OpenAI gpt-4o-mini
   |
   v
 Typed JobBridge response
   |
   v
-React joins jobId to loaded jobs
+React joins jobId to already-loaded jobs
 ```
 
-## 4. Request Contract
+API Manager is the application/API ingress. AI Gateway is the downstream LLM governance layer. AI Workspace remains the AI control plane.
+
+## 4. Public API Exposure
+
+The deployed browser calls:
+
+```text
+https://35.231.59.214/jobbridge/1.0/ai/match-jobs
+```
+
+This operation currently has API Manager security disabled so it is public, matching `GET /jobs`.
+
+The downstream AI Gateway is still protected by `X-API-Key` and the configured AI policies. React never receives that key.
+
+## 5. Request Contract
 
 ```json
 {
@@ -64,7 +85,29 @@ React joins jobId to loaded jobs
 }
 ```
 
-## 5. Response Contract
+## 6. LLM Request Structure
+
+JobBridge separates trusted application instructions from untrusted candidate input:
+
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "JobBridge instructions + ACTIVE jobs + response contract"
+    },
+    {
+      "role": "user",
+      "content": "<candidate profile>"
+    }
+  ]
+}
+```
+
+The Semantic Prompt Guard evaluates the final user message (`$.messages[-1].content`) rather than the trusted system message.
+
+## 7. Response Contract
 
 ```json
 {
@@ -72,107 +115,107 @@ React joins jobId to loaded jobs
     {
       "jobId": "job-002",
       "score": 80,
-      "reason": "The part-time Administrative Assistant role aligns well with the candidate's experience and location preference."
+      "reason": "The role aligns with the candidate's experience and location preference."
     }
   ]
 }
 ```
 
-## 6. Matching Rules
+The prompt instructs the model to use only supplied jobs, score from 0-100, return only scores of 60 or higher, return at most 5 matches, sort strongest first, and return JSON only.
 
-The prompt instructs the model to:
-
-- Use only jobs provided by JobBridge.
-- Score matches from 0 to 100.
-- Return only jobs scoring 60 or above.
-- Return at most 5 matches.
-- Order strongest matches first.
-- Explain each match briefly.
-- Return JSON only in the required structure.
-
-## 7. Backend Implementation
-
-A reusable `getActiveJobs()` project function queries MySQL and maps database rows into `Job[]`.
-
-The AI resource then:
-
-1. Gets active jobs.
-2. Converts jobs to JSON text.
-3. Builds the LLM prompt.
-4. Calls:
-   ```http
-   POST <aiGatewayUrl>/chat/completions
-   ```
-5. Sends:
-   ```http
-   X-API-Key: <aiGatewayApiKey>
-   ```
-6. Binds the OpenAI-compatible response to typed records.
-7. Parses `choices[0].message.content` into `MatchJobsResponse`.
-
-## 8. AI Gateway Design
-
-### Development
+## 8. Off-Topic and Guardrail Behavior
 
 ```text
-jobbridge-ai-proxy
--> local WSO2 AI Gateway
--> https://localhost:8443
+Candidate input
+   |
+   +--> Semantic Prompt Guard recognizes denied intent
+   |       -> AI Gateway 422
+   |       -> JobBridge friendly out-of-scope response
+   |
+   +--> Semantic guard does not match
+           -> request reaches model
+           -> system prompt forbids unrelated tasks
+           -> unrelated input returns {"matches": []}
 ```
 
-### Production
+This avoids relying on the semantic guardrail as a perfect classifier.
+
+## 9. Implemented AI Gateway Policies
+
+### PII masking/redaction
+
+Applied before upstream LLM processing so candidate-supplied personal information can be obscured before it reaches the provider.
+
+### Semantic Prompt Guard
+
+Uses an embedding provider configured on the AI Gateway and evaluates only the final user message. The gateway embedding configuration uses OpenAI `text-embedding-3-small`.
+
+### Token Based Rate Limit
+
+Current demo policy:
 
 ```text
-jobbridge-ai-prod
--> jobbridge-cloud-gateway
--> Google Compute Engine VM
--> Nginx public HTTPS
--> WSO2 AI Gateway 1.2
--> OpenAI Provider
+2,000 total tokens / 60 seconds
 ```
 
-AI Workspace acts as the control plane. The gateway runtime is self-hosted.
+This is an aggregate prompt + completion token quota during the time window. It is not a per-request 2,000-token limit.
 
-## 9. Credential Boundaries
+## 10. Backend Implementation
+
+The AI resource:
+
+1. Validates that `payload.profile` is not empty.
+2. Calls `getActiveJobs()`.
+3. Converts active jobs to JSON text.
+4. Builds the trusted system prompt.
+5. Sends `payload.profile` as the final user message.
+6. Calls `<aiGatewayUrl>/chat/completions` using `X-API-Key`.
+7. Handles non-2xx gateway responses explicitly.
+8. Preserves Semantic Prompt Guard interventions as HTTP `422`.
+9. Converts successful `200` responses to typed records and parses `choices[0].message.content` into `MatchJobsResponse`.
+
+## 11. API Manager Observability
+
+Because `/ai/match-jobs` now enters through API Manager, its browser invocations can appear in Moesif alongside the rest of the JobBridge API traffic.
+
+This provides application/API-level visibility before the request reaches the backend. AI Gateway/AI Workspace provides the downstream LLM-specific visibility and policies.
+
+## 12. Credential Boundaries
 
 ```text
-OpenAI API key
-  -> stored in WSO2 LLM Provider
+OpenAI model API key
+  -> WSO2 LLM Provider
+
+Embedding provider API key
+  -> AI Gateway config.toml
 
 App LLM Proxy API key
-  -> stored as job_board_api runtime secret
+  -> job_board_api runtime secret
+
+Moesif Collector Application ID
+  -> APIM deployment.toml
 
 React browser
-  -> receives neither key
+  -> receives none of the AI provider/proxy keys
 ```
 
-## 10. Operational Dependencies
+## 13. Operational Dependencies
 
 AI matching requires:
 
+- public APIM gateway available
+- JobBridge backend available
 - managed MySQL available
-- GCP AI Gateway VM running
-- Nginx/public TLS healthy
-- AI Gateway registered/Active in AI Workspace
-- production App LLM Proxy deployed
-- valid proxy API key
-- OpenAI provider available
+- AI Gateway VM available
+- Nginx/public TLS healthy on the AI Gateway VM
+- Active AI Workspace gateway registration
+- deployed `jobbridge-ai-prod`
+- valid App LLM Proxy key
+- embedding provider used by Semantic Prompt Guard
+- OpenAI LLM Provider available
 
-The rest of JobBridge can continue to serve normal jobs even if the AI matcher is unavailable, assuming the UI handles the matcher error independently.
+The rest of JobBridge can continue to serve normal jobs when AI matching is unavailable.
 
-## 11. AI Governance Next Steps
+## 14. Responsible Use
 
-Recommended additions:
-
-- Prompt-injection/content guardrail
-- Rate limit/token quota for matching requests
-- Input/output size limits
-- AI usage/cost monitoring
-- Request/response observability with sensitive-data review
-- Timeout and fallback behavior
-- Model/provider abstraction for future provider changes
-
-## 12. Responsible Use
-
-The JobBridge score is advisory. It is intended to help users explore jobs, not make hiring or eligibility decisions. The matcher should not infer or use protected characteristics, and the application should continue to let users browse all active jobs independently of AI recommendations.
-
+The JobBridge score is advisory. The matcher should not infer or use protected characteristics, and users can browse all active jobs independently of AI recommendations.

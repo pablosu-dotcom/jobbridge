@@ -7,16 +7,17 @@ Current platform layout:
 | Concern | Platform |
 |---|---|
 | Frontend | WSO2 Developer Platform Web Application |
-| Integration runtime | WSO2 Developer Platform / WSO2 Integrator |
+| Integration runtime | WSO2 Developer Platform / Devant / WSO2 Integrator |
 | Database | Managed MySQL |
 | Identity | Asgardeo |
+| API management | Self-hosted WSO2 API Manager 4.7 on Google Compute Engine |
+| API analytics | Moesif via API Manager analytics publisher |
 | AI control plane | WSO2 AI Workspace |
-| AI runtime gateway | WSO2 AI Gateway 1.2 on Google Compute Engine |
+| AI runtime gateway | WSO2 AI Gateway 1.2 on separate Google Compute Engine VM |
 | LLM provider | OpenAI through WSO2 LLM Provider |
-| API management lab | WSO2 API Platform / Bijira |
 | Source control | GitHub |
 
-The frontend and backend are separate Developer Platform components created from the same monorepo.
+The earlier WSO2 API Platform/Bijira proxy remains a lab artifact. The current deployed React application uses the self-hosted API Manager gateway as its active API ingress.
 
 ## 2. Repository Layout
 
@@ -35,9 +36,7 @@ Backend:  /job_board_api
 Frontend: /job-board-ui
 ```
 
-Using the correct component directory is important for buildpack behavior.
-
-## 3. GitHub Preparation
+## 3. GitHub and Secret Handling
 
 Recommended `.gitignore` entries include:
 
@@ -65,7 +64,15 @@ target/
 .vscode/
 ```
 
-Do not commit database credentials, AI Gateway API keys, OpenAI credentials, or local secrets.
+Do not commit:
+
+- database credentials
+- AI Gateway API keys
+- OpenAI provider keys
+- AI Gateway embedding-provider keys
+- Asgardeo management-application client secret
+- Moesif Collector Application ID if the repository is public and it is treated as an operational secret
+- local private keys or certificates
 
 ## 4. Backend Configurables
 
@@ -82,21 +89,7 @@ configurable string aiGatewayUrl = ?;
 configurable string aiGatewayApiKey = ?;
 ```
 
-Production values:
-
-```text
-mysql*            -> managed MySQL runtime configuration/secrets
-aiGatewayUrl      -> production App LLM Proxy base URL
-aiGatewayApiKey   -> secret
-```
-
-Example production AI URL:
-
-```text
-https://<ai-gateway-public-host-or-ip>/jobbridge/jobbridge-ai-prod
-```
-
-The code appends `/chat/completions`, so `aiGatewayUrl` must be the proxy base URL rather than the full chat-completions path.
+Production values are supplied through runtime configuration/secrets.
 
 ## 5. Managed MySQL
 
@@ -108,316 +101,459 @@ jobbridge
 └── organizations
 ```
 
-The database schema must match the Ballerina SQL row types and queries.
+The database schema must match the Ballerina SQL row types and queries. Runtime credentials are supplied by the platform rather than stored in GitHub.
 
-Runtime credentials are supplied by the platform rather than stored in GitHub.
-
-## 6. AI Workspace Configuration
-
-### LLM Provider
-
-An OpenAI LLM Provider is configured in an AI Workspace organization controlled by the project owner.
-
-The upstream OpenAI API key is stored in the LLM Provider and is never exposed to JobBridge.
-
-### App LLM Proxies
-
-Recommended separation:
-
-```text
-Development:
-  jobbridge-ai-proxy
-  -> local AI Gateway
-
-Production:
-  jobbridge-ai-prod
-  -> jobbridge-cloud-gateway
-```
-
-The backend uses an App LLM Proxy API key through:
-
-```http
-X-API-Key: <proxy-key>
-```
-
-Generate the key after the proxy is deployed to the intended gateway.
-
-## 7. Production AI Gateway on Google Cloud
-
-### VM
-
-The production runtime uses a dedicated Google Compute Engine VM.
-
-Recommended baseline:
-
-```text
-Machine type: e2-standard-2
-OS: Ubuntu LTS
-Static external IPv4
-Docker Engine + Docker Compose
-```
-
-### Gateway registration
-
-In AI Workspace:
-
-```text
-Name: jobbridge-cloud-gateway
-Environment: Production
-URL: https://<static-public-ip-or-hostname>
-```
-
-Use the gateway-specific registration instructions/token from AI Workspace.
-
-The working runtime is WSO2 AI Gateway **1.2.x**.
-
-### Runtime ports
-
-Keep gateway internal/admin ports private. Public traffic should enter through standard HTTPS.
-
-```text
-Internet :443
-    |
-    v
-Nginx
-    |
-    | http://127.0.0.1:8080
-    v
-WSO2 AI Gateway
-```
-
-### TLS
-
-Nginx terminates TLS with a publicly trusted certificate.
-
-If using a public IP directly, the current implementation uses a Let's Encrypt IP-address certificate. These certificates are short-lived, so automatic renewal must remain enabled and Nginx should reload when renewed.
-
-Do not disable TLS verification in the deployed Ballerina client.
-
-### Health
-
-On the VM:
-
-```bash
-docker compose ps
-curl http://localhost:9094/api/admin/v1/health
-```
-
-The AI Workspace gateway status should show `Active`.
-
-### Direct gateway test
-
-Before Nginx:
-
-```bash
-curl -k -X POST   "https://localhost:8443/jobbridge/jobbridge-ai-prod/chat/completions"   -H "Content-Type: application/json"   -H "X-API-Key: <proxy-key>"   -d '{
-    "model": "gpt-4o-mini",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Return exactly: direct cloud gateway test"
-      }
-    ]
-  }'
-```
-
-### Public gateway test
-
-Then test public HTTPS without `-k`:
-
-```bash
-curl -X POST   "https://<public-host-or-ip>/jobbridge/jobbridge-ai-prod/chat/completions"   -H "Content-Type: application/json"   -H "X-API-Key: <proxy-key>"   -d '{
-    "model": "gpt-4o-mini",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Return exactly: JobBridge cloud AI Gateway is working"
-      }
-    ]
-  }'
-```
-
-## 8. Backend Deployment
+## 6. Backend Deployment
 
 1. Import/create the backend component from GitHub.
-2. Set component directory:
-   ```text
-   /job_board_api
-   ```
+2. Set component directory to `/job_board_api`.
 3. Use the Ballerina / WSO2 Integrator build preset.
 4. Supply MySQL runtime values.
-5. Supply:
-   ```text
-   aiGatewayUrl
-   aiGatewayApiKey
-   ```
-6. Keep `aiGatewayApiKey` as a secret.
-7. Do not mount an additional certificate when the AI Gateway presents a publicly trusted certificate.
-8. Deploy the backend.
-9. Verify:
-   ```http
-   GET /api/jobs
-   POST /api/ai/match-jobs
-   ```
+5. Supply `aiGatewayUrl` and secret `aiGatewayApiKey`.
+6. Deploy to the target environment.
+7. Verify direct backend operations before introducing API Manager.
 
-Example AI test:
-
-```json
-{
-  "profile": "I have five years of customer service experience and want part-time work in Coral Gables."
-}
-```
-
-Expected shape:
-
-```json
-{
-  "matches": [
-    {
-      "jobId": "...",
-      "score": 80,
-      "reason": "..."
-    }
-  ]
-}
-```
-
-## 9. Frontend Web Application
-
-Create the Web Application component from:
+Current Devant service base used by API Manager:
 
 ```text
-/job-board-ui
+https://b48cc93e-fa33-4420-a155-bc653b4d46be-my-env.e1-us-east-azure.choreoapis.dev/pablosu-jobbridge/jobboardapi/v1
 ```
 
-Use:
+## 7. Generate the OpenAPI Contract
+
+From the backend package:
+
+```bash
+cd job_board_api
+bal build --export-openapi
+```
+
+Generated file:
 
 ```text
-Build command: npm ci && npm run build
-Build path:    dist
-Node version:  20
+target/openapi/api_openapi.yaml
 ```
 
-WSO2 Developer Platform **Managed Authentication is disabled** because JobBridge already authenticates directly with Asgardeo.
+Verify resources:
 
-## 10. UI-to-API Connection
+```bash
+grep -nE '^  /|^    (get|post|put|delete|patch):' target/openapi/api_openapi.yaml
+```
 
-Runtime file:
+The generated contract is imported into API Manager so the proxy contains explicit JobBridge operations rather than wildcard `/*` resources.
+
+## 8. Self-Hosted API Manager VM
+
+Current lab runtime:
 
 ```text
-job-board-ui/public/config.js
+Product: WSO2 API Manager 4.7.0
+VM:      Google Compute Engine
+Instance: apim-server
+Region:   us-east1
+Gateway HTTPS: 8243 internally
+Management HTTPS: 9443 internally
+Public ingress: 443 through Nginx
 ```
+
+The VM uses a reserved static external IPv4 address. Public consumer traffic enters through Nginx. Do not intentionally expose `8243` or `9443` directly to the Internet.
+
+### Start API Manager
+
+```bash
+cd ~/wso2/wso2am-4.7.0/bin
+./api-manager.sh
+```
+
+### Management access through SSH tunnel
+
+From the Mac:
+
+```bash
+gcloud compute ssh \
+  --zone "us-east1-b" \
+  "apim-server" \
+  --project "wso2-apim-cicd" \
+  -- -L 9443:localhost:9443 -L 8243:localhost:8243
+```
+
+Then use:
+
+```text
+https://localhost:9443/publisher
+https://localhost:9443/devportal
+https://localhost:9443/admin
+```
+
+For the tunnel-based management setup, `[server].hostname` is configured as `localhost`. The persisted `apim_publisher` OAuth callback was updated to use the localhost Publisher callback after the hostname change.
+
+## 9. Create JobBridge API in Publisher
+
+Import:
+
+```text
+target/openapi/api_openapi.yaml
+```
+
+Suggested API definition:
+
+```text
+Name:    JobBridge API
+Context: /jobbridge
+Version: 1.0
+```
+
+Production endpoint/target:
+
+```text
+https://b48cc93e-fa33-4420-a155-bc653b4d46be-my-env.e1-us-east-azure.choreoapis.dev/pablosu-jobbridge/jobboardapi/v1
+```
+
+The consumer gateway base becomes:
+
+```text
+https://<apim-public-ip>/jobbridge/1.0
+```
+
+Current lab value:
+
+```text
+https://35.231.59.214/jobbridge/1.0
+```
+
+## 10. Asgardeo Key Manager Integration
+
+### Asgardeo management application
+
+Create a separate confidential application, for example:
+
+```text
+API-Management-App
+```
+
+Authorize the required Asgardeo management APIs used by the connector, including API Resource Management, Dynamic Client Registration, and SCIM Roles management.
+
+This application is separate from the browser `JobBridge` SPA.
+
+### Global scope API resource
+
+Create:
+
+```text
+Display Name: APIM_GLOBAL_SCOPES
+Identifier:   /api/server/v1/scope-resource
+```
+
+Initially it can contain no scopes. API Manager synchronizes local API scopes into this resource.
+
+### APIM Key Manager settings
+
+In APIM Admin, add the Asgardeo Key Manager and use the Asgardeo tenant well-known configuration.
+
+Important connector values include:
+
+```text
+Organization: pabloco
+Global scopes resource: APIM_GLOBAL_SCOPES
+API Resource Management endpoint:
+  https://api.asgardeo.io/t/pabloco/api/server/v1/api-resources
+Roles endpoint:
+  https://api.asgardeo.io/t/pabloco/scim2/v2/Roles
+Scope Management Endpoint: none
+API Invocation Method: Direct Token
+Token validation: Self validate JWT
+Out Of Band Provisioning: enabled
+```
+
+A `403` while APIM fetches `APIM_GLOBAL_SCOPES` indicates the management application is missing the required Asgardeo management permission or the API Resource Management endpoint is incorrect.
+
+## 11. Scopes and Resource Security
+
+Create reusable Local Scopes in Publisher:
+
+```text
+jobs:write
+organization:manage
+admin
+```
+
+Assign:
+
+```text
+GET  /jobs
+  security disabled / public
+
+POST /ai/match-jobs
+  security disabled / public
+
+POST /jobs
+  jobs:write
+
+POST /organizations
+GET  /organizations/me
+  organization:manage
+
+/admin/*
+  admin
+```
+
+Saving the API after scope assignment synchronizes those scopes to `APIM_GLOBAL_SCOPES` in Asgardeo.
+
+In Asgardeo, authorize `APIM_GLOBAL_SCOPES` to the JobBridge SPA and map permissions to application roles:
+
+```text
+MEMBER_ORGANIZATION
+  jobs:write
+  organization:manage
+
+ADMIN
+  jobs:write
+  organization:manage
+  admin
+```
+
+If an Asgardeo API resource is deleted/recreated, verify the role-permission assignments again because those permission references can be removed with the original resource.
+
+## 12. Subscription and Existing SPA Client
+
+Keep API subscriptions enabled.
+
+1. Publish JobBridge API to DevPortal.
+2. Create an APIM application named `JobBridge`.
+3. Subscribe it to the JobBridge API.
+4. Use the Asgardeo Key Manager.
+5. Choose **Provide Existing OAuth Keys**.
+6. Supply the existing Asgardeo JobBridge SPA client ID as Consumer Key.
+7. Leave Consumer Secret blank because the SPA is a public PKCE client.
+
+For out-of-band mapping without requiring a secret, add to the existing `[apim.key_manager]` section in `deployment.toml`:
+
+```toml
+[apim.key_manager]
+enable_lightweight_apikey_generation = true
+enable_provisioned_app_validation = false
+service_url = "https://localhost:${mgt.transport.https.port}/services/"
+```
+
+Do not create a second `[apim.key_manager]` section.
+
+## 13. Nginx Public Gateway
+
+Nginx terminates public HTTPS and proxies to APIM Gateway `8243`.
 
 Example:
 
+```nginx
+server {
+    listen 80;
+    server_name 35.231.59.214;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name 35.231.59.214;
+
+    ssl_certificate /etc/letsencrypt/live/35.231.59.214/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/35.231.59.214/privkey.pem;
+
+    location / {
+        proxy_pass https://127.0.0.1:8243;
+        proxy_ssl_verify off;
+        proxy_ssl_server_name on;
+        proxy_ssl_name localhost;
+
+        proxy_set_header Host localhost;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+`proxy_ssl_verify off` is limited to the local Nginx-to-APIM hop because API Manager presents its local self-signed certificate. External clients receive the trusted public certificate from Nginx.
+
+## 14. Let's Encrypt IP Certificate
+
+The APIM VM uses a Let's Encrypt IP-address certificate with Certbot 5.7+.
+
+ACME webroot:
+
+```text
+/var/www/certbot
+```
+
+Production request pattern:
+
+```bash
+sudo certbot certonly \
+  --preferred-profile shortlived \
+  --webroot \
+  --webroot-path /var/www/certbot \
+  --ip-address 35.231.59.214
+```
+
+Certificate files:
+
+```text
+/etc/letsencrypt/live/35.231.59.214/fullchain.pem
+/etc/letsencrypt/live/35.231.59.214/privkey.pem
+```
+
+Add a deploy hook so Nginx reloads after renewal:
+
+```bash
+sudo mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh > /dev/null <<'HOOK'
+#!/bin/sh
+systemctl reload nginx
+HOOK
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+```
+
+Short-lived IP certificates require reliable automated renewal.
+
+## 15. Frontend Runtime Configuration
+
+The deployed UI uses a runtime file mount for `config.js`:
+
 ```javascript
 window.configs = {
-  apiUrl: "/choreo-apis/pablosu-jobbridge/jobboardapi/v1"
+  apiUrl: "https://35.231.59.214/jobbridge/1.0"
 };
 ```
 
-Shared API base resolution:
+All deployed API traffic uses this single base URL, including `/ai/match-jobs`.
 
-```javascript
-export const API_BASE_URL = import.meta.env.DEV
-  ? import.meta.env.VITE_API_BASE_URL || "/api"
-  : window?.configs?.apiUrl ||
-    import.meta.env.VITE_API_BASE_URL ||
-    "/api";
-```
-
-Behavior:
+Public calls do not send a bearer token:
 
 ```text
-Local:
-  /api -> Vite proxy -> http://127.0.0.1:9090
-
-Deployed:
-  /choreo-apis/pablosu-jobbridge/jobboardapi/v1
+GET  /jobs
+POST /ai/match-jobs
 ```
 
-This prevents `public/config.js` from forcing a deployed `/choreo-apis/...` path during local Vite development.
+Protected calls include:
 
-## 11. Asgardeo OIDC
-
-The SPA continues to use Asgardeo directly.
-
-```javascript
-const appUrl = window.location.origin;
+```http
+Authorization: Bearer <Asgardeo access token>
 ```
 
-Use the runtime origin for both sign-in and sign-out redirects.
+The deployed runtime file mount can override the file stored in GitHub. After changing the API base URL, update the WSO2 Developer Platform file mount and redeploy; otherwise the browser may continue calling the old `/choreo-apis/...` route.
 
-Register both local and deployed origins in Asgardeo. Redirect URLs must match exactly, including trailing slash behavior.
+## 16. Moesif Analytics
 
-## 12. Current API Security
+`deployment.toml`:
 
-The active deployed React-to-backend path uses the Developer Platform project connection.
+```toml
+[apim.analytics]
+enable = true
+type = "moesif"
 
-For the MVP:
+[apim.analytics.properties]
+moesifKey = "<MOESIF_COLLECTOR_APPLICATION_ID>"
+moesif_base_url = "https://api.moesif.net"
+send_headers = false
+send_payloads = false
+payload_size_limit = 100000
+capture_payloads_without_content_length = false
+```
 
-- Asgardeo authenticates the user to React.
-- Developer Platform Managed Authentication is disabled.
-- Backend OAuth2 enforcement is disabled.
-- Server-side role/ownership enforcement remains a hardening item.
+Use the **Moesif Collector Application ID**. A different Moesif management/API key can initialize the reporter but will not produce the expected event ingestion.
 
-Separately, a WSO2 API Platform proxy has been tested successfully using the built-in STS for OAuth2 security. It is not currently the route used by the deployed UI.
+Useful verification:
 
-## 13. Observability
+```bash
+grep -iE 'moesif|analytics' repository/logs/wso2carbon.log | tail -100
+curl -v --max-time 10 https://api.moesif.net
+```
+
+Expected startup log:
+
+```text
+Initializing Moesif metric reporter
+```
+
+Only requests traversing APIM are expected in this Moesif analytics path.
+
+## 17. AI Gateway Deployment
+
+The AI Gateway remains on its own GCP VM.
+
+```text
+React -> APIM -> JobBridge backend -> AI Gateway -> OpenAI
+```
+
+The production App LLM Proxy uses:
+
+```text
+PII masking/redaction
+Semantic Prompt Guard
+Token Based Rate Limit: 2,000 total tokens / 60 seconds
+```
+
+The backend calls the AI proxy with `X-API-Key`; the browser never receives that key.
+
+## 18. Observability
 
 Use:
 
-- Developer Platform application logs for Ballerina runtime, SQL, and AI call errors
-- Developer Platform gateway logs for component routing
-- AI Workspace insights for AI traffic where available
-- AI Gateway container logs on the GCP VM
-- Nginx logs for public gateway ingress
-- Google Cloud VM monitoring for runtime availability
+- Moesif for APIM gateway request analytics
+- APIM `wso2carbon.log` for Key Manager/analytics errors
+- WSO2 Developer Platform application logs for Ballerina/SQL/backend AI errors
+- AI Workspace insights where available
+- AI Gateway container logs on its GCP VM
+- Nginx logs on both gateway VMs
+- Google Cloud VM monitoring
 
-Useful gateway commands:
-
-```bash
-docker compose ps
-docker compose logs --tail=200
-```
-
-## 14. Deployment Sequence
-
-Recommended order:
+## 19. End-to-End Deployment Sequence
 
 ```text
-1. AI Gateway VM healthy + Active in AI Workspace
-2. OpenAI provider deployed to production gateway
-3. jobbridge-ai-prod deployed and API key tested
-4. job_board_api deployed and /ai/match-jobs tested
-5. job-board-ui deployed
-6. Full browser smoke test
+1. Managed MySQL available
+2. AI Gateway VM healthy and Active
+3. jobbridge-ai-prod deployed with AI policies
+4. JobBridge backend deployed and direct endpoint tested
+5. Ballerina OpenAPI contract generated
+6. JobBridge API imported/configured in APIM
+7. Asgardeo Key Manager connected
+8. APIM scopes synchronized to APIM_GLOBAL_SCOPES
+9. Asgardeo role-permission mappings verified
+10. DevPortal JobBridge application subscribed + SPA client ID mapped OOB
+11. Nginx + trusted TLS on APIM VM
+12. Public APIM curl tests pass
+13. Frontend runtime config.js updated to APIM URL
+14. Frontend redeployed
+15. Browser Network confirms APIM URL
+16. Moesif confirms browser traffic traverses APIM
 ```
 
-## 15. Production Readiness Checklist
+## 20. Production Readiness Checklist
 
 - [x] Frontend deployed
 - [x] Backend integration deployed
 - [x] Managed MySQL connected
-- [x] Database credentials kept out of GitHub
 - [x] Asgardeo OIDC login working
-- [x] JobBridge logo configured in Asgardeo
-- [x] UI-to-API project connection working
 - [x] AI Job Matcher implemented
-- [x] WSO2 AI Gateway deployed to GCP
-- [x] AI App LLM Proxy working through public HTTPS
-- [x] AI Gateway API key kept server-side
-- [x] Deployed `/api/ai/match-jobs` tested successfully
-- [ ] AI Gateway guardrails/policies configured
-- [ ] AI observability demo finalized
-- [ ] Access tokens validated by application API layer
-- [ ] Roles enforced server-side
-- [ ] User identity derived from validated token
-- [ ] Admin endpoints protected server-side
-- [ ] Organization ownership enforced server-side
-- [ ] Production backups configured
-- [ ] Logs/alerts operationalized
-- [ ] OpenAPI contract governed
-- [ ] Audit records captured
-- [ ] Decide whether deployed UI should route through API Platform
-
+- [x] WSO2 AI Gateway deployed and governed
+- [x] Ballerina OpenAPI contract generated
+- [x] Self-hosted API Manager 4.7 deployed
+- [x] Asgardeo configured as APIM Key Manager
+- [x] `jobs:write`, `organization:manage`, `admin` synchronized
+- [x] Resource-level OAuth scopes configured
+- [x] Public `/jobs` and `/ai/match-jobs` configured
+- [x] APIM Developer Portal subscription configured
+- [x] Existing Asgardeo SPA client mapped using OOB provisioning
+- [x] Nginx public HTTPS configured for APIM
+- [x] Trusted Let's Encrypt IP certificate configured
+- [x] React routes all backend traffic through APIM
+- [x] Moesif analytics ingesting APIM requests
+- [ ] Prevent direct backend bypass of APIM
+- [ ] Derive ownership from validated token identity
+- [ ] Automate `MEMBER_ORGANIZATION` role assignment
+- [ ] Production backup/alerting/auditing finalized

@@ -6,19 +6,20 @@ JobBridge is a minimal, purpose-built job board for member organizations and job
 
 The MVP is deployed and working with:
 
-- React + Vite web application
-- WSO2 Integrator / Ballerina backend integration
+- React + Vite web application on the WSO2 Developer Platform
+- WSO2 Integrator / Ballerina backend integration on Devant
 - Managed MySQL persistence
 - Asgardeo OIDC authentication and self-registration
-- Role-aware navigation
-- Organization approval and rejection
-- Job approval and rejection
+- Role-aware navigation and Asgardeo application roles
+- Self-hosted WSO2 API Manager 4.7 as the active browser-to-backend API gateway
+- OAuth2/JWT validation, reusable scopes, and subscription validation in API Manager
+- Moesif analytics for API Manager gateway traffic
 - AI job matching through WSO2 AI Gateway and OpenAI
-- Project-level UI-to-API connectivity through `/choreo-apis/...`
+- AI governance with PII masking/redaction, Semantic Prompt Guard, and token-based rate limiting
 - Runtime configuration and secrets supplied by the WSO2 Developer Platform
 - JobBridge branding in the Asgardeo login experience
 
-A separate WSO2 API Platform/Bijira proxy has also been built and tested with OAuth2 using the built-in STS, policies, throttling, and Developer Portal subscription. It is not currently in the deployed browser-to-backend path.
+The earlier WSO2 API Platform/Bijira proxy remains a useful lab artifact, but the deployed JobBridge web application now routes its API traffic through the self-hosted WSO2 API Manager gateway.
 
 ## Current Deployment Overview
 
@@ -29,22 +30,39 @@ Users
 JobBridge React/Vite Web Application
 WSO2 Developer Platform
   |
-  | /choreo-apis/pablosu-jobbridge/jobboardapi/v1
+  | HTTPS
+  | https://35.231.59.214/jobbridge/1.0
+  v
+Nginx :443
+Google Compute Engine - APIM VM
+  |
+  | HTTPS to localhost:8243
+  v
+WSO2 API Manager 4.7 Gateway
+  |  +-- GET  /jobs                 public
+  |  +-- POST /ai/match-jobs        public
+  |  +-- POST /jobs                 jobs:write
+  |  +-- /organizations/*           organization:manage
+  |  +-- /admin/*                   admin
+  |
+  | OAuth/JWT + scopes + subscriptions
+  | Moesif analytics
   v
 JobBridge Integration API
-WSO2 Integrator / Ballerina
+WSO2 Integrator / Ballerina on Devant
   | \
-  |  \ POST /api/ai/match-jobs
+  |  \\ POST /ai/match-jobs
   |   \
   |    v
   |  WSO2 AI Gateway 1.2
   |  Google Cloud VM + Nginx/TLS
-  |    |
-  |    v
   |  App LLM Proxy: jobbridge-ai-prod
-  |    |
+  |    +-- PII masking/redaction
+  |    +-- Semantic Prompt Guard
+  |    +-- Token Based Rate Limit
+  |    |    2,000 total tokens / 60 sec (demo setting)
   |    v
-  |  OpenAI (gpt-4o-mini)
+  |  OpenAI gpt-4o-mini
   |
   v
 Managed MySQL
@@ -52,26 +70,55 @@ Managed MySQL
   +-- organizations
 
 Asgardeo
-  +-- OIDC authentication
+  +-- OIDC / Authorization Code + PKCE
   +-- Self-registration
-  +-- User identity
   +-- Application roles
-  +-- JobBridge login branding
+  +-- APIM_GLOBAL_SCOPES
+  +-- JWT access tokens
 ```
 
-The React application authenticates users directly with Asgardeo. WSO2 Developer Platform Managed Authentication is disabled for the web application to avoid introducing a second authentication layer.
+The React application authenticates directly with Asgardeo. WSO2 Developer Platform Managed Authentication remains disabled so JobBridge does not introduce a second sign-in layer.
 
-OAuth2 enforcement on the currently deployed JobBridge backend path is disabled for the MVP. API-level OAuth, scopes, and stronger server-side authorization remain hardening items.
+## API Security Model
 
-## User Roles
+API Manager is the active ingress/security layer for React traffic.
 
-| Role | Purpose |
+| Resource | Access |
 |---|---|
-| `ADMIN` | Reviews organization applications and job postings |
-| `MEMBER_ORGANIZATION` | Posts jobs after organization approval |
-| `JOB_SEEKER` | Browses and applies for jobs |
+| `GET /jobs` | Public |
+| `POST /ai/match-jobs` | Public |
+| `POST /jobs` | OAuth2 + `jobs:write` |
+| `POST /organizations` | OAuth2 + `organization:manage` |
+| `GET /organizations/me` | OAuth2 + `organization:manage` |
+| `/admin/*` | OAuth2 + `admin` |
 
-A newly self-registered user may temporarily have no JobBridge role while an organization application is pending.
+Protected requests also use API Manager subscription validation. The existing Asgardeo JobBridge SPA client is associated with the subscribed APIM application through out-of-band provisioning.
+
+Asgardeo role-to-scope mapping:
+
+```text
+MEMBER_ORGANIZATION
+  jobs:write
+  organization:manage
+
+ADMIN
+  jobs:write
+  organization:manage
+  admin
+
+JOB_SEEKER
+  no protected API scope required for current public job search / AI matching
+```
+
+The React SPA requests:
+
+```text
+openid profile roles jobs:write organization:manage admin
+```
+
+Asgardeo RBAC determines which requested API scopes are actually granted to the signed-in user.
+
+See [Security Framework](docs/security-framework.md) for the consolidated security posture, trust boundaries, controls, verification tests, and remaining hardening work.
 
 ## Implemented Features
 
@@ -101,58 +148,77 @@ A newly self-registered user may temporarily have no JobBridge role while an org
 
 ### AI job matching
 
-The UI sends a short candidate profile to:
+The browser calls the public APIM operation:
 
 ```http
-POST /api/ai/match-jobs
+POST https://35.231.59.214/jobbridge/1.0/ai/match-jobs
 ```
 
-The backend:
+API Manager forwards the request to the JobBridge integration API. The backend then:
 
-1. Calls the reusable `getActiveJobs()` function.
-2. Reads active jobs from MySQL.
-3. Builds a prompt containing the candidate profile and active jobs.
+1. Calls reusable `getActiveJobs()` and reads active jobs from MySQL.
+2. Builds a trusted system message containing JobBridge instructions and the active-job list.
+3. Sends the candidate profile separately as the final user message.
 4. Calls the WSO2 AI Gateway App LLM Proxy.
-5. Uses OpenAI `gpt-4o-mini` to rank matches.
-6. Returns only matches with score `>= 60`, with at most 5 results.
-7. The React app joins each returned `jobId` to its already-loaded jobs state; it does not re-fetch individual jobs.
+5. The AI Gateway applies PII masking/redaction, Semantic Prompt Guard, and token-based rate limiting.
+6. Allowed requests are routed to OpenAI `gpt-4o-mini`.
+7. Semantic Prompt Guard interventions are preserved as HTTP `422` with a JobBridge-friendly response.
+8. Successful matching returns at most five instructed matches with scores of 60 or higher.
+9. React joins each returned `jobId` to the already-loaded jobs state.
 
 See [AI Job Matching](docs/ai-job-matching.md).
 
 ## API Summary
 
+Backend service resources:
+
 ```http
-GET  /api/jobs
-POST /api/jobs
+GET  /jobs
+POST /jobs
+POST /ai/match-jobs
 
-POST /api/ai/match-jobs
+POST /organizations
+GET  /organizations/me?ownerUserId={userId}
 
-POST /api/organizations
-GET  /api/organizations/me?ownerUserId={userId}
+GET /admin/jobs/pending
+PUT /admin/jobs/{id}/approve
+PUT /admin/jobs/{id}/reject
 
-GET /api/admin/jobs/pending
-PUT /api/admin/jobs/{id}/approve
-PUT /api/admin/jobs/{id}/reject
-
-GET /api/admin/organizations/pending
-PUT /api/admin/organizations/{id}/approve
-PUT /api/admin/organizations/{id}/reject
+GET /admin/organizations/pending
+PUT /admin/organizations/{id}/approve
+PUT /admin/organizations/{id}/reject
 ```
 
-The deployed web application reaches the backend through:
+Current public APIM base URL:
 
 ```text
-/choreo-apis/pablosu-jobbridge/jobboardapi/v1
+https://35.231.59.214/jobbridge/1.0
 ```
 
-Examples:
+Direct Devant target used by API Manager:
 
 ```text
-/choreo-apis/pablosu-jobbridge/jobboardapi/v1/jobs
-/choreo-apis/pablosu-jobbridge/jobboardapi/v1/ai/match-jobs
+https://b48cc93e-fa33-4420-a155-bc653b4d46be-my-env.e1-us-east-azure.choreoapis.dev/pablosu-jobbridge/jobboardapi/v1
 ```
 
 See [API Reference](docs/api-reference.md).
+
+## OpenAPI Contract
+
+The API contract is generated code-first from the Ballerina service:
+
+```bash
+cd job_board_api
+bal build --export-openapi
+```
+
+Generated contract:
+
+```text
+target/openapi/api_openapi.yaml
+```
+
+That OpenAPI file is imported into WSO2 API Manager so operations appear individually and can receive resource-specific security scopes.
 
 ## Repository Structure
 
@@ -163,6 +229,8 @@ local-job-board/
 │   ├── ai-job-matching.md
 │   ├── api-reference.md
 │   ├── deployment-guide.md
+│   ├── guardrails-summary.md
+│   ├── security-framework.md
 │   ├── solution-architecture.md
 │   └── testing-guide.md
 ├── job_board_api/
@@ -170,7 +238,7 @@ local-job-board/
 └── Ballerina.toml
 ```
 
-The repository is a monorepo. The backend and frontend are imported and deployed as separate WSO2 Developer Platform components.
+The repository is a monorepo. The backend and frontend are deployed as separate WSO2 Developer Platform components.
 
 ## Backend Configuration
 
@@ -191,143 +259,75 @@ In the deployed environment:
 
 - MySQL values are supplied through platform runtime configuration/secrets.
 - `aiGatewayUrl` points to the production App LLM Proxy base URL.
-- `aiGatewayApiKey` is stored as a secret.
-- Real database or AI Gateway credentials are not stored in GitHub.
-
-Example local configuration:
-
-```toml
-mysqlUser = "root"
-mysqlHost = "localhost"
-mysqlPassword = "replace-with-local-password"
-mysqlDatabase = "jobbridge"
-mysqlPort = 3306
-
-aiGatewayUrl = "https://localhost:8443/jobbridge/jobbridge-ai-proxy"
-aiGatewayApiKey = "replace-with-local-proxy-key"
-```
-
-Do not commit a real `Config.toml`.
+- `aiGatewayApiKey` is stored as a backend secret.
+- Real database, OpenAI, Asgardeo management-app, Moesif, or AI Gateway secrets are not stored in GitHub.
 
 ## Frontend Runtime Configuration
 
-The deployed React application uses:
-
-```text
-job-board-ui/public/config.js
-```
-
-Example:
+The deployed React application uses a runtime `config.js` file mount. The deployed value must point to the APIM gateway:
 
 ```javascript
 window.configs = {
-  apiUrl: "/choreo-apis/pablosu-jobbridge/jobboardapi/v1"
+  apiUrl: "https://35.231.59.214/jobbridge/1.0"
 };
 ```
 
-The shared frontend configuration distinguishes local Vite development from deployment:
+All deployed backend traffic, including `/ai/match-jobs`, uses this single `apiUrl`.
 
-```javascript
-export const API_BASE_URL = import.meta.env.DEV
-  ? import.meta.env.VITE_API_BASE_URL || "/api"
-  : window?.configs?.apiUrl ||
-    import.meta.env.VITE_API_BASE_URL ||
-    "/api";
-```
+Local Vite development continues to use `/api` and the local proxy to `127.0.0.1:9090`.
 
-This means:
-
-```text
-Local Vite:
-  /api -> Vite proxy -> http://127.0.0.1:9090
-
-Deployed:
-  window.configs.apiUrl -> /choreo-apis/... -> deployed backend
-```
+Important: updating `job-board-ui/public/config.js` in GitHub does not by itself replace an environment-specific runtime file mount. Update the deployed `config.js` file mount and redeploy when the production API URL changes.
 
 ## Asgardeo Configuration
 
-The React application uses the Asgardeo SPA SDK with Authorization Code + PKCE.
+The JobBridge React application uses Authorization Code + PKCE.
 
-The redirect URL is derived at runtime:
-
-```javascript
-const appUrl = window.location.origin;
-```
-
-Asgardeo must contain exact matching redirect URLs for local and deployed environments. A trailing `/` mismatch can cause a callback error.
-
-The JobBridge logo is hosted by the web application and referenced by Asgardeo using its public PNG URL.
-
-## Local Run
-
-### MySQL
-
-Start MySQL and create the `jobbridge` database and the `jobs` and `organizations` tables.
-
-### AI Gateway
-
-For local AI matching, run the local WSO2 AI Gateway and deploy the development App LLM Proxy:
+API Manager synchronizes reusable scopes into the Asgardeo API resource:
 
 ```text
-https://localhost:8443/jobbridge/jobbridge-ai-proxy
+Display name: APIM_GLOBAL_SCOPES
+Identifier:   /api/server/v1/scope-resource
 ```
 
-### Backend
-
-Run `job_board_api` from WSO2 Integrator.
-
-Typical local API URL:
+Current scopes:
 
 ```text
-http://localhost:9090/api
+jobs:write
+organization:manage
+admin
 ```
 
-### Frontend
+A separate Asgardeo `API-Management-App` is used by the APIM Asgardeo Key Manager connector for management API calls. It is not the browser SPA.
 
-```bash
-cd job-board-ui
-npm install
-npm run dev
-```
+## API Manager and Analytics
 
-Typical local frontend URL:
+The self-hosted API Manager 4.7 deployment uses:
 
-```text
-http://localhost:5173
-```
+- Asgardeo external Key Manager
+- Direct Token invocation
+- JWT self-validation through Asgardeo JWKS
+- Out-of-band OAuth client provisioning for the existing JobBridge SPA
+- Developer Portal application/subscription validation
+- Nginx public HTTPS on port 443
+- Moesif analytics
 
-## API Platform / Bijira Lab Status
+Moesif must use the **Collector Application ID** as `moesifKey`; a Moesif management/API key will not ingest gateway events.
 
-A separate `JobBridge Public API` proxy was created in WSO2 API Platform and tested with:
+## Current Limitations / Hardening
 
-- Built-in API Platform STS
-- OAuth2 protection
-- Public GET resources and protected write resources
-- Rate limiting
-- Response-header policy
-- Gateway deployment
-- Developer Portal publication and subscription
-
-An external Asgardeo key manager was explored, but the deployed JobBridge web application currently continues to use the Developer Platform project connection rather than routing through this API Platform proxy.
-
-## Current Limitations
-
-- API OAuth2 enforcement is disabled on the deployed Developer Platform backend path.
-- Backend authorization is not yet the final authority for all role-sensitive operations.
-- `GET /api/organizations/me` accepts `ownerUserId` from the browser.
-- Organization approval does not automatically assign the Asgardeo `MEMBER_ORGANIZATION` role.
-- Jobs currently store an organization name rather than an `organization_id` foreign key.
-- API error responses should be standardized.
-- AI output is LLM-generated and should be treated as advisory matching rather than a deterministic hiring decision.
-- The cloud AI Gateway VM must be running for deployed AI matching to work.
+- The Devant backend target is still a separately reachable endpoint; production hardening should prevent bypassing APIM or add defense-in-depth backend authentication.
+- `GET /organizations/me` still accepts `ownerUserId` from the browser; identity should eventually be derived server-side from the validated token.
+- Organization approval does not automatically assign `MEMBER_ORGANIZATION` in Asgardeo.
+- Jobs currently store an organization name rather than a normalized `organization_id` foreign key.
+- AI matching is intentionally public at APIM; downstream AI Gateway token-rate controls mitigate demo abuse, but production abuse controls should be reviewed.
+- AI output is advisory and should not be treated as an automated hiring decision.
+- Both GCP gateway VMs must be operational for their respective runtime paths.
 
 ## Next Steps
 
-1. Add AI Gateway guardrails/policies and demonstrate AI observability.
-2. Update the solution and deployment architecture diagrams with AI Workspace, the GCP AI Gateway, and OpenAI.
-3. Decide whether to move the deployed browser-to-backend path behind the WSO2 API Platform proxy.
-4. Complete server-side authentication, roles, ownership checks, and scopes.
-5. Automate Asgardeo role assignment after organization approval.
-6. Add production-grade backup, monitoring, alerting, auditing, and AI Gateway certificate/VM operational monitoring.
-
+1. Restrict direct backend access so APIM is the only supported consumer ingress path.
+2. Derive organization ownership from validated token identity rather than browser-supplied user IDs.
+3. Automate Asgardeo role assignment after organization approval.
+4. Tune AI quotas using observed usage.
+5. Add production backups, monitoring, alerting, and auditing.
+6. Automate and monitor short-lived Let's Encrypt IP certificate renewal on the gateway VMs.

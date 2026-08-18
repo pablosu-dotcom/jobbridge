@@ -2,17 +2,19 @@
 
 ## 1. Conventions
 
-Local base URL:
+Local backend base URL:
 
 ```text
 http://localhost:9090/api
 ```
 
-Current deployed web-app route:
+Current deployed consumer/API Manager base URL:
 
 ```text
-/choreo-apis/pablosu-jobbridge/jobboardapi/v1
+https://35.231.59.214/jobbridge/1.0
 ```
+
+API Manager forwards to the deployed Devant backend service.
 
 Content type:
 
@@ -20,13 +22,32 @@ Content type:
 application/json
 ```
 
-The active deployed MVP backend path does not currently enforce end-user OAuth2. A separate API Platform proxy has been tested with OAuth2 using the built-in STS but is not the route currently used by the deployed web app.
+### Security
+
+| Resource | Security |
+|---|---|
+| `GET /jobs` | Public |
+| `POST /ai/match-jobs` | Public |
+| `POST /jobs` | OAuth2 + `jobs:write` |
+| `POST /organizations` | OAuth2 + `organization:manage` |
+| `GET /organizations/me` | OAuth2 + `organization:manage` |
+| `/admin/*` | OAuth2 + `admin` |
+
+Protected calls also use APIM subscription validation. The bearer token is issued by Asgardeo and validated by API Manager through the Asgardeo Key Manager.
 
 ## 2. Public Job APIs
 
 ### GET `/jobs`
 
 Returns active job postings.
+
+Public deployed URL:
+
+```text
+https://35.231.59.214/jobbridge/1.0/jobs
+```
+
+No bearer token is required.
 
 #### Response: `200 OK`
 
@@ -45,7 +66,7 @@ Returns active job postings.
 ]
 ```
 
-Only jobs with `status = ACTIVE` are returned.
+Only `ACTIVE` jobs are returned.
 
 ---
 
@@ -53,22 +74,30 @@ Only jobs with `status = ACTIVE` are returned.
 
 Creates a pending job posting.
 
-#### Intended authorization
+Required scope:
 
-`MEMBER_ORGANIZATION`
+```text
+jobs:write
+```
+
+Typical role:
+
+```text
+MEMBER_ORGANIZATION
+```
 
 #### Request
 
 ```json
 {
-  "title": "QA Tester",
-  "organization": "Pabloco",
+  "title": "Senior Software Engineer",
+  "organization": "CityWorks Inc",
   "location": "Miami, FL",
-  "employmentType": "Part-time",
-  "description": "Test applications",
-  "applyUrl": "https://www.example.com/jobs/qa",
-  "salaryMin": 18,
-  "salaryMax": 22
+  "description": "Design, develop, and maintain cloud-native applications and APIs.",
+  "employmentType": "Full-time",
+  "salaryMin": 110000,
+  "salaryMax": 140000,
+  "applyUrl": "https://cityworks.example.com/jobs/senior-software-engineer"
 }
 ```
 
@@ -83,7 +112,9 @@ Creates a pending job posting.
 
 ### POST `/ai/match-jobs`
 
-Ranks currently active JobBridge jobs against a short candidate profile.
+Ranks active JobBridge jobs against a short candidate profile.
+
+The APIM operation is currently public, so no bearer token is required. The downstream AI Gateway remains protected by an App LLM Proxy API key and AI-specific policies.
 
 #### Request
 
@@ -95,16 +126,17 @@ Ranks currently active JobBridge jobs against a short candidate profile.
 
 #### Processing
 
-The backend:
+```text
+React
+  -> APIM public POST /ai/match-jobs
+  -> JobBridge Integration API
+  -> getActiveJobs() / MySQL
+  -> WSO2 AI Gateway
+  -> PII + Semantic Prompt Guard + token quota
+  -> OpenAI gpt-4o-mini
+```
 
-1. Calls `getActiveJobs()`.
-2. Builds a prompt using the candidate profile and active jobs.
-3. Calls the production WSO2 AI Gateway App LLM Proxy.
-4. Uses `gpt-4o-mini`.
-5. Parses the model's JSON-only response into typed JobBridge records.
-6. Returns at most five matches with score `>= 60`.
-
-#### Response: `200` or `201`
+#### Response: `200 OK`
 
 ```json
 {
@@ -112,35 +144,43 @@ The backend:
     {
       "jobId": "job-002",
       "score": 80,
-      "reason": "The part-time Administrative Assistant role aligns well with the candidate's customer service experience and interest in helping people."
-    },
-    {
-      "jobId": "68683c00-d5de-4ac7-ba30-f84d831a1365",
-      "score": 60,
-      "reason": "The part-time QA Tester role is a weaker but still relevant match based on transferable communication and problem-solving skills."
+      "reason": "The role aligns with the candidate's experience and location preference."
     }
   ]
 }
 ```
 
-The AI endpoint returns match metadata rather than duplicating the complete job object. The React application joins each `jobId` to the jobs already loaded in the browser.
+React joins each `jobId` to the jobs already loaded in the browser.
 
-#### AI Gateway dependency
+#### Guardrail response: `422 Unprocessable Entity`
 
-The deployed backend uses:
+Example:
 
-```text
-aiGatewayUrl    = https://<public-host-or-ip>/jobbridge/jobbridge-ai-prod
-aiGatewayApiKey = <server-side secret>
+```json
+{
+  "message": "This request is outside the scope of JobBridge. Please describe your skills, experience, location, or job preferences."
+}
 ```
 
-The API key is never returned to or stored in the browser.
+#### Token quota response: `429 Too Many Requests`
+
+The AI Gateway demo quota is currently:
+
+```text
+2,000 total tokens / 60 seconds
+```
 
 ## 4. Organization APIs
 
 ### POST `/organizations`
 
 Submits a new organization application.
+
+Required scope:
+
+```text
+organization:manage
+```
 
 #### Request
 
@@ -155,15 +195,7 @@ Submits a new organization application.
 }
 ```
 
-#### Current behavior
-
-- Generates a UUID
-- Stores the owner user ID supplied by the frontend
-- Sets `status = PENDING`
-
-#### Target behavior
-
-The backend should derive identity from a validated token instead of trusting a browser-supplied owner ID.
+Current implementation still receives `ownerUserId` from the frontend. A future hardening step should derive this value from the validated token.
 
 ---
 
@@ -171,32 +203,23 @@ The backend should derive identity from a validated token instead of trusting a 
 
 Returns the current user's organization application.
 
-#### Example response: `200 OK`
+Required scope:
 
-```json
-{
-  "id": "c1c54ad9-2f38-43d8-9169-9c488e6e22d5",
-  "ownerUserId": "asgardeo-sub",
-  "name": "Pabloco",
-  "website": "https://www.example.com",
-  "contactName": "Example Contact",
-  "contactEmail": "admin@example.com",
-  "description": "Technology and professional services organization.",
-  "status": "PENDING"
-}
+```text
+organization:manage
 ```
 
 ## 5. Administrator Job APIs
 
+All administrator job operations require:
+
+```text
+admin
+```
+
 ### GET `/admin/jobs/pending`
 
 Returns pending job postings.
-
-Intended authorization:
-
-```text
-ADMIN
-```
 
 ### PUT `/admin/jobs/{id}/approve`
 
@@ -208,31 +231,75 @@ Rejects a pending job.
 
 ## 6. Administrator Organization APIs
 
+All administrator organization operations require:
+
+```text
+admin
+```
+
 ### GET `/admin/organizations/pending`
 
 Returns pending organization applications.
-
-Intended authorization:
-
-```text
-ADMIN
-```
 
 ### PUT `/admin/organizations/{id}/approve`
 
 Approves a pending organization.
 
-Operational follow-up currently includes assigning the Asgardeo `MEMBER_ORGANIZATION` role manually and having the user sign in again.
+Current operational follow-up includes assigning `MEMBER_ORGANIZATION` in Asgardeo and having the user obtain a fresh login/token.
 
 ### PUT `/admin/organizations/{id}/reject`
 
 Rejects a pending organization.
 
-## 7. AI Gateway API
+## 7. OAuth / Scope Behavior
 
-JobBridge does not expose the App LLM Proxy directly to the browser.
+The JobBridge SPA requests:
 
-The backend calls an OpenAI-compatible endpoint:
+```text
+openid profile roles jobs:write organization:manage admin
+```
+
+Asgardeo RBAC filters the granted scopes by application-role permissions.
+
+Expected examples:
+
+```text
+MEMBER_ORGANIZATION token
+  jobs:write
+  organization:manage
+  no admin
+
+ADMIN token
+  jobs:write
+  organization:manage
+  admin
+```
+
+### Missing token
+
+Protected operation without a valid token:
+
+```text
+401 Unauthorized
+```
+
+### Missing scope
+
+Valid subscribed token without the resource scope:
+
+```text
+403 Forbidden
+```
+
+## 8. Subscription Validation
+
+Protected API calls are associated with the APIM `JobBridge` Developer Portal application subscription.
+
+The existing Asgardeo JobBridge SPA client ID is mapped to that APIM application through out-of-band provisioning. The SPA uses PKCE and does not have a client secret.
+
+## 9. AI Gateway API
+
+The JobBridge backend—not the browser—calls:
 
 ```http
 POST <aiGatewayUrl>/chat/completions
@@ -240,23 +307,9 @@ X-API-Key: <aiGatewayApiKey>
 Content-Type: application/json
 ```
 
-Request shape:
+The browser never receives the App LLM Proxy API key, the OpenAI provider key, or the embedding-provider key.
 
-```json
-{
-  "model": "gpt-4o-mini",
-  "messages": [
-    {
-      "role": "user",
-      "content": "<JobBridge matching prompt>"
-    }
-  ]
-}
-```
-
-The WSO2 AI Gateway routes the request to the configured OpenAI LLM Provider.
-
-## 8. Recommended HTTP Status Standards
+## 10. Recommended HTTP Status Standards
 
 | Situation | Status |
 |---|---:|
@@ -265,20 +318,36 @@ The WSO2 AI Gateway routes the request to the configured OpenAI LLM Provider.
 | Successful update | `200` or `204` |
 | Invalid request | `400` |
 | Missing/invalid token | `401` |
-| Authenticated but unauthorized | `403` |
+| Authenticated but unauthorized / scope missing | `403` |
 | Resource not found | `404` |
 | Conflict or duplicate application | `409` |
+| AI semantic guardrail intervention | `422` |
+| AI token quota exhausted | `429` |
 | Upstream AI unavailable | `502` or `503` |
 | Unexpected database or service error | `500` |
 
-## 9. Planned API Improvements
+## 11. OpenAPI Source
 
-- Derive identity from validated tokens.
-- Add/maintain a formal OpenAPI definition.
-- Decide whether the deployed application will route through WSO2 API Platform.
-- Apply scopes and policies if API Platform becomes the active consumer-facing route.
+Generate from the Ballerina implementation:
+
+```bash
+cd job_board_api
+bal build --export-openapi
+```
+
+Output:
+
+```text
+target/openapi/api_openapi.yaml
+```
+
+That contract is imported into API Manager and is the basis for resource-specific scope configuration.
+
+## 12. Planned API Improvements
+
+- Prevent direct backend bypass of the API gateway.
+- Derive organization ownership from the validated JWT subject.
 - Standardize error bodies.
 - Add pagination/filtering to jobs.
-- Add organization ownership validation.
-- Add AI-specific error handling, timeout behavior, and fallback messaging.
-
+- Automate organization-role assignment.
+- Review public AI matching abuse controls for production.

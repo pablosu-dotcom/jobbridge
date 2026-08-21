@@ -1,0 +1,83 @@
+arazzo: 1.0.1
+
+info:
+  title: JobBridge Job Submission Workflow
+  version: 1.0.0
+  description: >
+    Workflow used by an authorized member organization or AI agent
+    to submit a new job posting to JobBridge.
+
+sourceDescriptions:
+  - name: jobBridgeApi
+    url: ./api_openapi.yaml
+    type: openapi
+
+workflows:
+  - workflowId: publishJob
+    summary: Create and approve a JobBridge job posting
+    description: >
+      Creates a new JobBridge job posting and then approves
+      the newly created job using the returned job identifier.
+
+    inputs:
+      type: object
+      required:
+        - title
+        - organization
+        - location
+        - employmentType
+        - description
+        - applyUrl
+
+      properties:
+        title:
+          type: string
+        organization:
+          type: string
+        location:
+          type: string
+        employmentType:
+          type: string
+        description:
+          type: string
+        applyUrl:
+          type: string
+
+    steps:
+      - stepId: createJob
+        description: Create a new pending JobBridge job posting.
+
+        operationId: postJobs
+
+        requestBody:
+          contentType: application/json
+          payload:
+            title: $inputs.title
+            organization: $inputs.organization
+            location: $inputs.location
+            employmentType: $inputs.employmentType
+            description: $inputs.description
+            applyUrl: $inputs.applyUrl
+
+        successCriteria:
+          - condition: $statusCode == 201
+
+        outputs:
+          jobId: $response.body#/id
+          jobStatus: $response.body#/status
+
+      - stepId: approveJob
+        description: Approve the job created in the previous step.
+
+        operationId: putAdminJobsIdApprove
+
+        parameters:
+          - name: id
+            in: path
+            value: $steps.createJob.outputs.jobId
+
+        successCriteria:
+          - condition: $statusCode == 202
+
+    outputs:
+      jobId: $steps.createJob.outputs.jobId

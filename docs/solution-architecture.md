@@ -16,6 +16,7 @@ The solution demonstrates:
 - AI-assisted job matching
 - LLM governance through WSO2 AI Gateway
 - Separation of presentation, API management, integration, identity, persistence, and AI runtime concerns
+- Agentic API composition using Arazzo workflows and MCP tooling
 
 ## 2. Business Problem
 
@@ -180,7 +181,82 @@ AI Workspace remains the control plane for the self-hosted AI Gateway runtime. I
 
 API Publisher/Admin/DevPortal run on the APIM VM and are accessed through an SSH tunnel to management port `9443`. Public consumer traffic enters through Nginx on `443`; ports `8243` and `9443` are not intentionally exposed to the Internet.
 
-## 6. API Security and Authorization Flow
+## 6. Agentic Workflow / MCP Lab
+
+JobBridge now includes a local agentic-integration lab that demonstrates how API operations can be composed into a business-level capability and exposed as an MCP tool. This path is additive to the deployed browser architecture; it does not replace the React/APIM runtime path.
+
+```text
+AI / MCP client
+(MCP Inspector today; AI agent client next)
+        |
+        | MCP over Streamable HTTP
+        v
++-----------------------------------------------+
+| Generated JobBridge MCP Server               |
+| Docker container                             |
+| host port 5001 -> container port 5000        |
+| Tool: publishJob                             |
++----------------------+------------------------+
+                       |
+                       | executes Arazzo
+                       v
++-----------------------------------------------+
+| Arazzo 1.0.1 workflow                        |
+| publishJob                                    |
+|                                               |
+| 1. createJob                                  |
+|    operationId: postJobs                      |
+|    POST /jobs                                 |
+|    output: jobId <- $response.body#/id        |
+|                                               |
+| 2. approveJob                                 |
+|    operationId: putAdminJobsIdApprove         |
+|    PUT /admin/jobs/{jobId}/approve            |
++----------------------+------------------------+
+                       |
+                       | http://host.docker.internal:9090/api
+                       v
+              JobBridge Integration API
+                       |
+                       v
+                  Managed MySQL
+```
+
+### Authoring and generation
+
+- **WSO2 Arazzo Visualizer for VS Code**: authoring, visualization, validation, and `Try with curl` execution.
+- **Arazzo version**: `1.0.1`, matching the current visualizer/LSP support used in the lab.
+- **OpenAPI source**: generated from Ballerina and copied into `job_board_api/workflows/api_openapi.yaml` for the local workflow/MCP package.
+- **WSO2 Arazzo MCP Generator**: official `wso2/arazzo-mcp-generator`, CLI `arazzo-mcp-gen` v0.1.0.
+- **MCP test client**: MCP Inspector.
+
+### Why Arazzo is used here
+
+A single-step Arazzo definition can resemble an API tool wrapper. The `publishJob` workflow demonstrates the stronger use case: one business outcome is composed from multiple operations, and data produced by one step becomes input to the next. The caller does not need to know the generated job identifier or manually orchestrate the approval request.
+
+### Current lab boundary
+
+The MCP container currently calls the locally running Ballerina API directly. Therefore this lab path bypasses the deployed API Manager gateway and does not yet exercise APIM OAuth, reusable scopes, subscription validation, or Moesif analytics. The production target is to place the agent path behind the governed API layer and represent the AI agent as a first-class identity with least-privilege authorization and auditable actions.
+
+### OpenAPI server behavior observed
+
+The generated Ballerina contract uses a parameterized server URL:
+
+```yaml
+servers:
+  - url: "http://{server}:{port}/api"
+```
+
+That form worked in the VS Code Arazzo Visualizer. In the generated Docker MCP runtime it produced `404` responses even though direct container-to-host GET/POST calls succeeded. The workflow-specific OpenAPI copy therefore uses:
+
+```yaml
+servers:
+  - url: "http://host.docker.internal:9090/api"
+```
+
+This is treated as a local tooling/runtime workaround, not a change to the code-first Ballerina OpenAPI source.
+
+## 7. API Security and Authorization Flow
 
 ```text
 React SPA
@@ -249,7 +325,7 @@ Identifier: /api/server/v1/scope-resource
 
 The JobBridge SPA is authorized for the synchronized scopes. RBAC determines which scopes are actually granted to each user.
 
-## 7. Subscription Model
+## 8. Subscription Model
 
 The JobBridge API remains subscription-enabled in API Manager.
 
@@ -267,7 +343,7 @@ JobBridge API 1.0
 
 The browser SPA is a public PKCE client and therefore has no client secret. APIM uses out-of-band client mapping with the existing Asgardeo client ID rather than creating a second browser OAuth application.
 
-## 8. AI Job Matching Flow
+## 9. AI Job Matching Flow
 
 ```text
 Job seeker profile
@@ -312,7 +388,7 @@ React joins jobId to existing jobs state
 
 The AI service does not create new jobs or alter the database. It ranks only active jobs supplied by JobBridge.
 
-## 9. Component Responsibilities
+## 10. Component Responsibilities
 
 ### React/Vite frontend
 
@@ -381,6 +457,14 @@ AI matching reads active jobs but does not persist AI results.
 - Token-based rate limiting
 - AI-specific runtime governance
 
+### Arazzo / MCP agentic workflow
+
+- Defines the composed `publishJob` business capability
+- Reuses OpenAPI `operationId` values instead of duplicating API semantics
+- Passes the created job identifier from `postJobs` into `putAdminJobsIdApprove`
+- Is exposed as an MCP tool by the generated local MCP server
+- Currently operates as a local lab path; production governance remains a next step
+
 ### Moesif
 
 - API Manager request analytics
@@ -389,7 +473,7 @@ AI matching reads active jobs but does not persist AI results.
 
 Only traffic that actually passes through API Manager appears in this analytics path.
 
-## 10. Organization Lifecycle
+## 11. Organization Lifecycle
 
 ```text
 No application
@@ -406,7 +490,7 @@ ACTIVE    REJECTED
 
 Role assignment remains a separate administrative step after approval.
 
-## 11. Job Lifecycle
+## 12. Job Lifecycle
 
 ```text
 Job submitted
@@ -424,7 +508,7 @@ and eligible for AI matching
 
 Only `ACTIVE` jobs are used by public search and AI matching.
 
-## 12. Key Design Decisions
+## 13. Key Design Decisions
 
 ### One API ingress path from React
 
@@ -456,7 +540,7 @@ The design intentionally uses reusable scopes (`jobs:write`, `organization:manag
 
 `POST /ai/match-jobs` is public at API Manager, matching the public job-search experience. The expensive downstream LLM call remains protected by the AI Gateway App LLM Proxy and its token-rate policy.
 
-## 13. Known Architecture Gaps
+## 14. Known Architecture Gaps
 
 - The direct Devant backend endpoint can still be a bypass path unless restricted or protected independently.
 - `GET /organizations/me` should ultimately derive identity from the validated token rather than browser-supplied ownership data.
@@ -466,3 +550,5 @@ The design intentionally uses reusable scopes (`jobs:write`, `organization:manag
 - Certificate renewal/VM uptime for both gateway VMs should be monitored.
 - Auditing should record who reviewed each organization and job.
 - AI matching is advisory and should not be treated as an automated hiring decision.
+- The local MCP path currently bypasses APIM and therefore does not yet enforce agent-specific OAuth scopes, subscriptions, or centralized API analytics.
+- The generated MCP runner required an explicit Docker-to-host OpenAPI server URL in the current lab; parameterized server variables should be retested as the tooling evolves.

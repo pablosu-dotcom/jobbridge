@@ -18,6 +18,8 @@ The MVP is deployed and working with:
 - AI governance with PII masking/redaction, Semantic Prompt Guard, and token-based rate limiting
 - Runtime configuration and secrets supplied by the WSO2 Developer Platform
 - JobBridge branding in the Asgardeo login experience
+- Executable Arazzo workflow for composed job publishing (`publishJob`)
+- MCP server generated from the Arazzo workflow and validated through MCP Inspector
 
 The earlier WSO2 API Platform/Bijira proxy remains a useful lab artifact, but the deployed JobBridge web application now routes its API traffic through the self-hosted WSO2 API Manager gateway.
 
@@ -220,12 +222,63 @@ target/openapi/api_openapi.yaml
 
 That OpenAPI file is imported into WSO2 API Manager so operations appear individually and can receive resource-specific security scopes.
 
+## Agentic Workflow with Arazzo and MCP
+
+JobBridge now includes an agent-ready workflow that demonstrates how API operations can be composed into a higher-level business capability. The workflow is authored with **Arazzo 1.0.1** and uses the generated JobBridge OpenAPI contract as its source description.
+
+```text
+AI / MCP client
+      |
+      v
+MCP tool: publishJob
+      |
+      v
+Arazzo workflow
+  1. POST /jobs
+       -> 201 Created
+       -> capture response.id as jobId
+  2. PUT /admin/jobs/{jobId}/approve
+       -> 202 Accepted
+      |
+      v
+JobBridge Integration API
+      |
+      v
+Managed MySQL
+```
+
+The caller supplies only the business inputs (`title`, `organization`, `location`, `employmentType`, `description`, and `applyUrl`). Arazzo passes the job identifier returned by the create step into the approval step. This is intentionally different from a single-step API wrapper: `publishJob` represents one business outcome composed from multiple API operations.
+
+Current workflow files:
+
+```text
+job_board_api/workflows/
+├── publish-job.arazzo.yaml
+└── api_openapi.yaml
+```
+
+The OpenAPI copy under `workflows/` is used by the local Arazzo/MCP lab and is separate from the generated code-first contract under `target/openapi/`. For the Docker-based MCP test, its server URL is set explicitly to:
+
+```yaml
+servers:
+  - url: "http://host.docker.internal:9090/api"
+```
+
+This allows the MCP container to call the JobBridge API running on the macOS host. The explicit URL also avoids a current runner issue observed with the parameterized OpenAPI server URL (`http://{server}:{port}/api`).
+
+The WSO2 Arazzo Visualizer was used to author, visualize, validate, and execute the workflow. The official `wso2/arazzo-mcp-generator` CLI (`arazzo-mcp-gen` v0.1.0) was then used to generate a Dockerized MCP server. The generated MCP tool was invoked successfully with MCP Inspector and created/approved a JobBridge job through the two-step workflow.
+
+The current MCP path is a **local agentic-integration lab**, not the production consumer path. It calls the local JobBridge backend directly and therefore does not yet inherit API Manager OAuth, scopes, subscriptions, or Moesif analytics. A production agent path should route through the governed API layer and use an agent identity with least-privilege authorization.
+
+See [Agentic Workflows](docs/agentic-workflows.md) for setup, commands, workflow design, MCP generation, testing, and known tooling behavior.
+
 ## Repository Structure
 
 ```text
 local-job-board/
 ├── README.md
 ├── docs/
+│   ├── agentic-workflows.md
 │   ├── ai-job-matching.md
 │   ├── api-reference.md
 │   ├── deployment-guide.md
@@ -234,6 +287,9 @@ local-job-board/
 │   ├── solution-architecture.md
 │   └── testing-guide.md
 ├── job_board_api/
+│   └── workflows/
+│       ├── publish-job.arazzo.yaml
+│       └── api_openapi.yaml
 ├── job-board-ui/
 └── Ballerina.toml
 ```
@@ -322,6 +378,8 @@ Moesif must use the **Collector Application ID** as `moesifKey`; a Moesif manage
 - AI matching is intentionally public at APIM; downstream AI Gateway token-rate controls mitigate demo abuse, but production abuse controls should be reviewed.
 - AI output is advisory and should not be treated as an automated hiring decision.
 - Both GCP gateway VMs must be operational for their respective runtime paths.
+- The current local MCP workflow calls the backend directly and does not yet use APIM OAuth/scopes or an independently governed agent identity.
+- The current Arazzo/MCP runner required an explicit OpenAPI server URL for Docker-to-host execution; the parameterized server URL worked in the VS Code visualizer but returned `404` through the generated MCP runtime.
 
 ## Next Steps
 
@@ -331,3 +389,5 @@ Moesif must use the **Collector Application ID** as `moesifKey`; a Moesif manage
 4. Tune AI quotas using observed usage.
 5. Add production backups, monitoring, alerting, and auditing.
 6. Automate and monitor short-lived Let's Encrypt IP certificate renewal on the gateway VMs.
+7. Connect an AI agent/client to the MCP `publishJob` tool and demonstrate natural-language tool selection.
+8. Move the agent execution path behind API Manager and apply agent-specific identity, scopes, subscription/governance, and auditing.
